@@ -98,7 +98,7 @@ def load_data_from_gsheets():
     try:
         # 구글 시트 연결 (Secrets에 설정한 정보를 사용)
         conn = st.connection("gsheets", type=GSheetsConnection)
-        df = conn.read()
+        df = conn.read(worksheet="Sheet1")
         
         if df is None or df.empty: return None, None
         
