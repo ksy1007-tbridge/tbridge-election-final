@@ -93,33 +93,32 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=60) # 캐시를 1분으로 줄여서 즉각 반영되게 합니다.
 def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Sheet1을 명시적으로 읽어옵니다.
-        df = conn.read(worksheet="Sheet1")
+        
+        # [수정 핵심] worksheet 옵션을 아예 빼버립니다. 
+        # 그러면 자동으로 첫 번째 탭(Sheet1)을 읽어옵니다.
+        df = conn.read() 
         
         if df is None or df.empty: return None, None
         
-        # 1. 컬럼명을 영문에서 다시 한글로 매칭해줍니다 (에러 방지 핵심!)
-        # 시트 헤더가 date, region, candidate, value, party 인 경우입니다.
+        # 컬럼명 강제 지정 (시트의 1행이 영어든 한글이든 상관없이 덮어씌움)
+        # 데이터가 5개 열(A~E)인지 꼭 확인하세요!
         df.columns = ['조사일자', '지역', '후보', '지지율', '정당']
         
-        # 2. 이후 로직은 기존과 동일합니다.
         df['지역'] = df['지역'].astype(str).str.strip().replace(NAME_MAPPING)
         df['지지율'] = pd.to_numeric(df['지지율'], errors='coerce').fillna(0)
-        df['후보'] = df['후보'].astype(str)
-        df['정당'] = df['정당'].astype(str)
-        df['조사일자'] = df['조사일자'].astype(str)
         
         df_all = df.sort_values(by=['지역', '후보', '조사일자'])
         df_latest = df_all.drop_duplicates(subset=['지역', '후보'], keep='last').copy()
         return df_all, df_latest
     except Exception as e:
-        st.error(f"구글 시트 연결 중 에러 발생: {e}")
+        # 에러가 나면 화면에 아주 상세하게 뿌려줍니다.
+        st.error(f"상세 에러 내용: {e}")
         return None, None
-
+        
 # 데이터 로드 실행
 df_current_all, df_current_latest = load_data_from_gsheets()
 is_valid = df_current_latest is not None and not df_current_latest.empty and '지역' in df_current_latest.columns
