@@ -97,24 +97,27 @@ with st.sidebar:
 def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        # Clear any hidden characters by specifying Sheet1
+        # Sheet1을 명시적으로 읽어옵니다.
         df = conn.read(worksheet="Sheet1")
         
         if df is None or df.empty: return None, None
         
-        df.columns = [str(c).strip() for c in df.columns]
+        # 1. 컬럼명을 영문에서 다시 한글로 매칭해줍니다 (에러 방지 핵심!)
+        # 시트 헤더가 date, region, candidate, value, party 인 경우입니다.
+        df.columns = ['조사일자', '지역', '후보', '지지율', '정당']
         
+        # 2. 이후 로직은 기존과 동일합니다.
         df['지역'] = df['지역'].astype(str).str.strip().replace(NAME_MAPPING)
         df['지지율'] = pd.to_numeric(df['지지율'], errors='coerce').fillna(0)
-        df['후보'] = df.get('후보', pd.Series(['Unknown']*len(df))).astype(str)
-        df['정당'] = df.get('정당', pd.Series(['Etc']*len(df))).astype(str)
-        df['조사일자'] = df.get('조사일자', pd.Series(['Recent']*len(df))).astype(str)
+        df['후보'] = df['후보'].astype(str)
+        df['정당'] = df['정당'].astype(str)
+        df['조사일자'] = df['조사일자'].astype(str)
         
         df_all = df.sort_values(by=['지역', '후보', '조사일자'])
         df_latest = df_all.drop_duplicates(subset=['지역', '후보'], keep='last').copy()
         return df_all, df_latest
     except Exception as e:
-        st.error(f"Connection Error: {e}")
+        st.error(f"구글 시트 연결 중 에러 발생: {e}")
         return None, None
 
 # 데이터 로드 실행
