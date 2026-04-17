@@ -93,33 +93,28 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-@st.cache_data(ttl=600) # 10분마다 캐시 갱신
+@st.cache_data(ttl=600)
 def load_data_from_gsheets():
     try:
-        # 구글 시트 연결 (Secrets에 설정한 정보를 사용)
         conn = st.connection("gsheets", type=GSheetsConnection)
+        # Clear any hidden characters by specifying Sheet1
         df = conn.read(worksheet="Sheet1")
         
         if df is None or df.empty: return None, None
         
-        # 컬럼 공백 제거 및 정리
         df.columns = [str(c).strip() for c in df.columns]
         
-        if '지역' not in df.columns or '지지율' not in df.columns:
-            st.error("🚨 구글 시트 첫 줄에 '지역'과 '지지율' 열 이름이 정확히 있는지 확인해주세요!")
-            return None, None
-            
         df['지역'] = df['지역'].astype(str).str.strip().replace(NAME_MAPPING)
         df['지지율'] = pd.to_numeric(df['지지율'], errors='coerce').fillna(0)
-        df['후보'] = df.get('후보', pd.Series(['알수없음']*len(df))).astype(str)
-        df['정당'] = df.get('정당', pd.Series(['기타정당']*len(df))).astype(str)
-        df['조사일자'] = df.get('조사일자', pd.Series(['최신']*len(df))).astype(str)
+        df['후보'] = df.get('후보', pd.Series(['Unknown']*len(df))).astype(str)
+        df['정당'] = df.get('정당', pd.Series(['Etc']*len(df))).astype(str)
+        df['조사일자'] = df.get('조사일자', pd.Series(['Recent']*len(df))).astype(str)
         
         df_all = df.sort_values(by=['지역', '후보', '조사일자'])
         df_latest = df_all.drop_duplicates(subset=['지역', '후보'], keep='last').copy()
         return df_all, df_latest
     except Exception as e:
-        st.error(f"구글 시트 연결 중 에러 발생: {e}")
+        st.error(f"Connection Error: {e}")
         return None, None
 
 # 데이터 로드 실행
