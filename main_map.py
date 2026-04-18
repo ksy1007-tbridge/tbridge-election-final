@@ -13,8 +13,9 @@ st.set_page_config(page_title="T-Bridge Election Dashboard", page_icon="🌉", l
 
 BRAND_INDIGO = "#1A237E" 
 GRAY_LIGHT = "#F5F5F5"   
-SEL_FILL = "#E3F2FD"     # 사용자 요청: 연한 파스텔 블루
-SEL_LINE = "#1565C0"     # 사용자 요청: 버튼과 조화되는 진한 파랑
+# [사용자 요청] 파란색 버튼과 조화되는 색상
+SEL_FILL = "#E3F2FD"     # 연한 파스텔 블루 (배경)
+SEL_LINE = "#1565C0"     # 진한 파란색 (테두리)
 
 st.markdown(f"""
 <style>
@@ -45,8 +46,8 @@ def get_hexagon_path(col, row, radius=1):
         x.append(cx + radius * math.cos(a)); y.append(cy + radius * math.sin(a))
     return cx, cy, x + [x[0]], y + [y[0]]
 
-# [핵심] 지도의 색상 결정 로직을 완전히 분리
-def draw_hexagon_map(df, title_text, highlight_regions=None, mode="normal", active_regions=None):
+# [V6.3] 함수 이름을 바꿔서 캐시 문제를 원천 차단합니다.
+def render_election_map(df, title_text, highlight_regions=None, mode="normal", active_regions=None):
     if highlight_regions is None: highlight_regions = []
     if active_regions is None: active_regions = []
     
@@ -54,22 +55,20 @@ def draw_hexagon_map(df, title_text, highlight_regions=None, mode="normal", acti
     for region, (col, row) in HEX_MAP.items():
         cx, cy, x_coords, y_coords = get_hexagon_path(col, row)
         
-        # 1. 색상 초기화
-        color = '#F0F2F6'
-        text_color = BRAND_INDIGO
-        line_color = "white"
-        line_width = 2
-        hover_text = f"<b>{region}</b>"
+        # 1. 초기 색상 (데이터 없는 상태)
+        current_fill = '#F0F2F6'
+        current_text = BRAND_INDIGO
+        current_line = "white"
+        current_width = 2
+        current_hover = f"<b>{region}</b>"
 
         # 2. 모드별 색상 입히기
         if mode == "status":
-            # [시군구 분석 모드] 데이터 유무에 따른 남색/회색 배정
             is_active = region in active_regions
-            color = BRAND_INDIGO if is_active else GRAY_LIGHT
-            text_color = "white" if is_active else "#9E9E9E"
-            hover_text += f"<br>{'데이터 구축됨' if is_active else '업데이트 대기'}"
+            current_fill = BRAND_INDIGO if is_active else GRAY_LIGHT
+            current_text = "white" if is_active else "#9E9E9E"
+            current_hover += f"<br>{'분석 가능 (데이터 있음)' if is_active else '업데이트 대기 중'}"
         else:
-            # [일반 판세 모드] 빨강/파랑 배정
             if df is not None and '지역' in df.columns:
                 r_all = df[df['지역'] == region].sort_values(by='지지율', ascending=False)
                 if not r_all.empty:
@@ -78,29 +77,28 @@ def draw_hexagon_map(df, title_text, highlight_regions=None, mode="normal", acti
                     gap = win.get('지지율', 0) - r_all.iloc[1].get('지지율', 0) if len(r_all) > 1 else 0
                     if '민주' in p_orig:
                         alpha = max(0.3, min(gap / 25.0, 1.0))
-                        color = f'rgba(0, 78, 162, {alpha})'
-                        text_color = 'white' if alpha >= 0.5 else BRAND_INDIGO
+                        current_fill = f'rgba(0, 78, 162, {alpha})'
+                        current_text = 'white' if alpha >= 0.5 else BRAND_INDIGO
                     elif '국힘' in p_orig or '국민의힘' in p_orig:
-                        color = '#E61E2B'
-                        text_color = 'white'
+                        current_fill = '#E61E2B'
+                        current_text = 'white'
                     else:
-                        color = '#808080'
-                        text_color = 'white'
-                    hover_text += f"<br>1위: {win['후보']} ({gap:.1f}%p 차)"
+                        current_fill = '#808080'
+                        current_text = 'white'
+                    current_hover += f"<br>1위: {win['후보']} ({gap:.1f}%p 차)"
 
-        # 3. [최우선] 선택된 지역 색상 덮어쓰기
-        # 이 부분이 실행되면 위의 모든 색상이 무시되고 연한 하늘색이 됩니다.
+        # 3. [최우선] 선택된 지역 (강제로 연한 하늘색 덮어씌움)
         if region in highlight_regions:
-            color = SEL_FILL       # 연한 파스텔 블루
-            line_color = SEL_LINE  # 진한 파랑 테두리
-            line_width = 10        # 매우 두껍게
-            text_color = BRAND_INDIGO
-            hover_text = f"<b>{region} (분석 모드)</b>"
+            current_fill = SEL_FILL    # 연한 파스텔 블루
+            current_line = SEL_LINE    # 진한 파랑 테두리
+            current_width = 10         # 매우 두꺼운 테두리
+            current_text = BRAND_INDIGO
+            current_hover = f"<b>{region} (분석 모드 활성)</b>"
 
-        fig.add_trace(go.Scatter(x=x_coords, y=y_coords, fill='toself', fillcolor=color, mode='lines', 
-                                 line=dict(color=line_color, width=line_width), name=region, text=hover_text, hoverinfo='text'))
+        fig.add_trace(go.Scatter(x=x_coords, y=y_coords, fill='toself', fillcolor=current_fill, mode='lines', 
+                                 line=dict(color=current_line, width=current_width), name=region, text=current_hover, hoverinfo='text'))
         fig.add_trace(go.Scatter(x=[cx], y=[cy], mode='text', text=[f"<b>{region}</b>"], 
-                                 textfont=dict(color=text_color, size=15, family="Noto Sans KR"), hoverinfo='skip'))
+                                 textfont=dict(color=current_text, size=15, family="Noto Sans KR"), hoverinfo='skip'))
 
     fig.update_layout(title=dict(text=f"<b>{title_text}</b>", font=dict(size=22, color=BRAND_INDIGO), x=0.5), xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x", scaleratio=1), height=550, plot_bgcolor='rgba(0,0,0,0)', showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
     return fig
@@ -110,8 +108,7 @@ def draw_hexagon_map(df, title_text, highlight_regions=None, mode="normal", acti
 # ==========================================
 with st.sidebar:
     st.markdown(f"<h2 style='text-align: center; color: {BRAND_INDIGO};'>T-Bridge</h2>", unsafe_allow_html=True)
-    # 버전 체크용 문구
-    st.markdown("<div style='text-align:center; color:red; font-weight:bold;'>V6.2 (Final Fix)</div>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align:center; color:blue; font-weight:bold; font-size:16px;'>V6.3 (Final Complete)</div>", unsafe_allow_html=True)
     
     app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "시군구 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
     st.divider()
@@ -145,7 +142,7 @@ is_valid = df_current_latest is not None and not df_current_latest.empty
 st.markdown("""<div class='main-header'><h1>T-Bridge 헥사곤 판세 분석 솔루션 (Live)</h1></div>""", unsafe_allow_html=True)
 
 # ------------------------------------------
-# 시군구 판세 분석 모드
+# 시군구 판세 분석 모드 (V6.3 고강도 보정)
 # ------------------------------------------
 if app_mode == "시군구 판세 분석":
     st.subheader("📍 기초자치단체별 상세 판세 분석")
@@ -171,8 +168,8 @@ if app_mode == "시군구 판세 분석":
         
         sel_reg = st.session_state['selected_region']
         
-        # 지도를 그릴 때 데이터프레임을 None으로 주어 지지율 색상이 끼어들지 못하게 원천 봉쇄합니다.
-        st.plotly_chart(draw_hexagon_map(None, f"🔍 {sel_reg} 상세 분석 중", 
+        # 지도를 그릴 때 데이터프레임을 None으로 강제 전달하여 빨강/파랑 로직을 원천 차단합니다.
+        st.plotly_chart(render_election_map(None, f"🔍 {sel_reg} 상세 분석 중 (V6.3)", 
                                          mode="status", 
                                          active_regions=active_regions,
                                          highlight_regions=[sel_reg]), use_container_width=True)
@@ -185,19 +182,24 @@ if app_mode == "시군구 판세 분석":
             fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='정당', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"),
                              title=f"[{sel_reg}] 기초자치단체별 지지율", barmode='group', color_discrete_map=cmap)
             st.plotly_chart(fig_sub, use_container_width=True)
+            
+            # [요청 반영] 상세 데이터 리스트 (표) 복구 및 상시 노출
+            st.write("### 📋 기초지역별 상세 지지율 데이터")
+            st.dataframe(sub_df[['기초지역', '후보', '정당', '지지율']].sort_values(['기초지역', '지지율'], ascending=[True, False]), 
+                         hide_index=True, use_container_width=True)
         else:
-            st.warning(f"🔔 {sel_reg} 지역의 상세 데이터는 현재 업데이트 대기 중입니다.")
+            st.warning(f"🔔 {sel_reg} 지역의 기초 상세 데이터는 업데이트 대기 중입니다.")
 
-# (이하 현행 판세 및 다른 모드는 기존 로직)
+# (이하 현행 판세 분석 및 기타 모드)
 elif app_mode == "현행 판세 분석":
     df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
-    st.plotly_chart(draw_hexagon_map(df_prov, "현행 전국 판세 실시간 데이터", mode="normal"), use_container_width=True)
+    st.plotly_chart(render_election_map(df_prov, "전국 광역 시·도별 판세 현황", mode="normal"), use_container_width=True)
 
 elif app_mode == "2025 대선 비교 분석":
     col1, col2 = st.columns(2)
     df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
-    with col1: st.plotly_chart(draw_hexagon_map(df_2025, "🗳️ 2025년 대선 결과", mode="normal"), use_container_width=True)
-    with col2: st.plotly_chart(draw_hexagon_map(df_prov, "📈 현재 판세 실시간 데이터", mode="normal"), use_container_width=True)
+    with col1: st.plotly_chart(render_election_map(df_2025, "🗳️ 2025년 대선 결과", mode="normal"), use_container_width=True)
+    with col2: st.plotly_chart(render_election_map(df_prov, "📈 현재 판세 실시간 데이터", mode="normal"), use_container_width=True)
 
 elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
     if not is_valid: st.warning("데이터를 불러오는 중입니다...")
@@ -211,4 +213,4 @@ elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
             p = str(row['정당'])
             if '민주' in p: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_minju)
             elif '국힘' in p or '국민의힘' in p: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_gukhim)
-        st.plotly_chart(draw_hexagon_map(df_sim, "시뮬레이션 결과", mode="normal"), use_container_width=True)
+        st.plotly_chart(render_election_map(df_sim, "시뮬레이션 결과", mode="normal"), use_container_width=True)
