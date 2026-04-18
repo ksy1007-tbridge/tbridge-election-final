@@ -5,7 +5,7 @@ import plotly.express as px
 import math
 import os
 import io
-from streamlit_gsheets import GSheetsConnection  # 구글 시트 연결용 추가
+from streamlit_gsheets import GSheetsConnection  # 구글 시트 연결용
 
 # ==========================================
 # 1. 페이지 설정 및 브랜딩
@@ -80,53 +80,51 @@ def draw_hexagon_map(df, title_text, highlight_regions=None):
     return fig
 
 # ==========================================
-# 6. 메인 UI 및 데이터 로드 (구글 시트 연동 버전)
+# 6. 메인 UI 및 데이터 로드 (구글 시트 연동)
 # ==========================================
 with st.sidebar:
     if os.path.exists("logo.png"): st.image("logo.png", use_container_width=True)
     else: st.markdown(f"<h2 style='text-align: center; color: {BRAND_INDIGO};'>T-Bridge</h2>", unsafe_allow_html=True)
     st.markdown("<div style='text-align:center; color:gray; font-size:14px; margin-bottom:20px;'>Live Analysis Solution V6.0</div>", unsafe_allow_html=True)
-    app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
+    
+    # [수정] 메뉴 추가: '시군구 판세 분석'
+    app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "시군구 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
+    
     st.divider()
     st.info("✅ 데이터가 구글 시트와 실시간 연동 중입니다.")
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
     
-    # ------------------------------------------
-    # 법적 고지 문구 추가 (스타일 A)
-    # ------------------------------------------
     st.divider()
     st.caption("⚠️ **법적 고지**")
     st.caption("인용된 조사의 자세한 내용은 중앙선거여론조사심의위원회 홈페이지를 참조하시기 바랍니다.")
 
-@st.cache_data(ttl=60) # 캐시를 1분으로 줄여서 즉각 반영되게 합니다.
+@st.cache_data(ttl=60)
 def load_data_from_gsheets():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # [수정 핵심] worksheet 옵션을 아예 빼버립니다. 
-        # 그러면 자동으로 첫 번째 탭(Sheet1)을 읽어옵니다.
         df = conn.read() 
         
         if df is None or df.empty: return None, None
         
-        # 컬럼명 강제 지정 (시트의 1행이 영어든 한글이든 상관없이 덮어씌움)
-        # 데이터가 5개 열(A~E)인지 꼭 확인하세요!
-        df.columns = ['조사일자', '지역', '후보', '지지율', '정당']
+        # [수정] 6개 열 읽기: 기초지역(sub_region) 추가
+        df.columns = ['조사일자', '지역', '기초지역', '후보', '지지율', '정당']
         
         df['지역'] = df['지역'].astype(str).str.strip().replace(NAME_MAPPING)
-        df['지지율'] = pd.to_numeric(df['지지율'], errors='coerce').fillna(0)
+        # 기초지역 공백 처리
+        df['기초지역'] = df['기초지역'].fillna('전체').astype(str).str.strip().replace('', '전체').replace('nan', '전체')
+        df['지지율'] = pd.to_numeric(df['지지율'].astype(str).str.replace('%',''), errors='coerce').fillna(0)
         
-        df_all = df.sort_values(by=['지역', '후보', '조사일자'])
-        df_latest = df_all.drop_duplicates(subset=['지역', '후보'], keep='last').copy()
+        df_all = df.sort_values(by=['조사일자', '지역', '기초지역'])
+        # [수정] 중복 제거 기준에 '기초지역' 포함
+        df_latest = df_all.drop_duplicates(subset=['지역', '기초지역', '후보'], keep='last').copy()
         return df_all, df_latest
     except Exception as e:
-        # 에러가 나면 화면에 아주 상세하게 뿌려줍니다.
         st.error(f"상세 에러 내용: {e}")
         return None, None
         
-# 데이터 로드 실행
+# 데이터 로드
 df_current_all, df_current_latest = load_data_from_gsheets()
 is_valid = df_current_latest is not None and not df_current_latest.empty and '지역' in df_current_latest.columns
 
@@ -134,22 +132,61 @@ st.markdown("""<div class='main-header'><h1>T-Bridge 헥사곤 판세 분석 솔
 
 df_sim = None 
 
+# ------------------------------------------
+# 모드별 화면 렌더링
+# ------------------------------------------
 if app_mode == "현행 판세 분석":
-    st.plotly_chart(draw_hexagon_map(df_current_latest if is_valid else None, "현행 전국 판세 실시간 데이터"), use_container_width=True)
+    # 광역 데이터만 필터링하여 지도에 표시
+    df_provincial = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
+    st.plotly_chart(draw_hexagon_map(df_provincial, "현행 전국 판세 실시간 데이터"), use_container_width=True)
+
+elif app_mode == "시군구 판세 분석":
+    st.subheader("📍 기초자치단체별 상세 판세")
+    if not is_valid:
+        st.warning("데이터를 불러올 수 없습니다.")
+    else:
+        # 1. 광역 선택
+        all_regions = sorted(df_current_latest['지역'].unique())
+        sel_region = st.selectbox("분석할 광역 시·도를 선택하세요", all_regions)
+        
+        # 2. 해당 광역 내 기초 데이터 필터링 ('전체' 제외)
+        sub_df = df_current_latest[(df_current_latest['지역'] == sel_region) & (df_current_latest['기초지역'] != '전체')]
+        
+        if not sub_df.empty:
+            st.success(f"✅ {sel_region} 내 {len(sub_df['기초지역'].unique())}개 기초자치단체의 데이터가 확인되었습니다.")
+            
+            # 시군구별 바 차트 (색상은 정당 기준)
+            cmap = {'더불어민주당': '#004EA2', '국민의힘': '#E61E2B', '민주당': '#004EA2', '국힘': '#E61E2B'}
+            
+            fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='정당', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"),
+                             title=f"[{sel_region}] 시·군·구별 후보 지지율 현황",
+                             barmode='group', color_discrete_map=cmap)
+            
+            fig_sub.update_layout(xaxis_title="기초자치단체", yaxis_title="지지율 (%)", font=dict(family="Noto Sans KR"))
+            st.plotly_chart(fig_sub, use_container_width=True)
+            
+            st.write("### 📋 상세 데이터 리스트")
+            st.dataframe(sub_df[['기초지역', '후보', '정당', '지지율']].sort_values(['기초지역', '지지율'], ascending=[True, False]), 
+                         hide_index=True, use_container_width=True)
+        else:
+            st.warning(f"🔔 현재 {sel_region}의 기초자치단체(시·군·구) 상세 데이터는 업데이트 준비 중입니다.")
+            st.info("광역 단위 전체 판세는 '현행 판세 분석' 메뉴에서 확인해 주세요.")
 
 elif app_mode == "2025 대선 비교 분석":
     col1, col2 = st.columns(2)
+    df_provincial = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
     with col1: st.plotly_chart(draw_hexagon_map(df_2025, "🗳️ 2025년 대선 결과"), use_container_width=True)
-    with col2: st.plotly_chart(draw_hexagon_map(df_current_latest if is_valid else None, "📈 구글 시트 실시간 데이터"), use_container_width=True)
+    with col2: st.plotly_chart(draw_hexagon_map(df_provincial, "📈 현재 판세 실시간 데이터"), use_container_width=True)
 
 elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
     if not is_valid: st.warning("데이터를 불러오는 중입니다...")
     else:
+        df_provincial = df_current_latest[df_current_latest['기초지역'] == '전체'].copy()
         col_s1, col_s2 = st.columns(2)
         with col_s1: adj_minju = st.slider("🔵 민주당 지지율 일괄 조정 (%p)", -10.0, 10.0, 0.0, 0.5)
         with col_s2: adj_gukhim = st.slider("🔴 국민의힘 지지율 일괄 조정 (%p)", -10.0, 10.0, 0.0, 0.5)
 
-        df_sim = df_current_latest.copy().reset_index(drop=True)
+        df_sim = df_provincial.reset_index(drop=True)
         for idx, row in df_sim.iterrows():
             party = str(row.get('정당', ''))
             if '민주' in party: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_minju)
@@ -157,7 +194,7 @@ elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
 
         flipped_regions = []
         for r in HEX_MAP.keys():
-            orig_data = df_current_latest[df_current_latest['지역'] == r].sort_values(by='지지율', ascending=False)
+            orig_data = df_provincial[df_provincial['지역'] == r].sort_values(by='지지율', ascending=False)
             sim_data = df_sim[df_sim['지역'] == r].sort_values(by='지지율', ascending=False)
             if not orig_data.empty and not sim_data.empty:
                 if orig_data.iloc[0]['후보'] != sim_data.iloc[0]['후보']: flipped_regions.append(r)
@@ -165,24 +202,21 @@ elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
         st.plotly_chart(draw_hexagon_map(df_sim, "가상 시나리오 반영 후 판세", highlight_regions=flipped_regions), use_container_width=True)
 
 # ==========================================
-# 7. 하단 상세 분석
+# 7. 하단 상세 분석 (광역 기준)
 # ==========================================
-if is_valid:
+if is_valid and app_mode != "시군구 판세 분석":
     st.divider()
-    target_df = df_sim if (app_mode == "🎛️ 가상 시나리오 시뮬레이터" and df_sim is not None) else df_current_latest
+    # 시뮬레이션 모드면 시뮬레이션 데이터를, 아니면 광역 최신 데이터를 사용
+    target_df = df_sim if (app_mode == "🎛️ 가상 시나리오 시뮬레이터" and df_sim is not None) else df_current_latest[df_current_latest['기초지역'] == '전체']
     
-    if target_df is not None and '지역' in target_df.columns:
-        valid_regions = [r for r in HEX_MAP.keys() if r in target_df['지역'].unique()]
+    if target_df is not None and not target_df.empty:
+        valid_regions = sorted(target_df['지역'].unique())
+        selected = st.selectbox("🎯 상세 정보를 확인할 지역을 선택하세요", valid_regions)
         
-        if valid_regions:
-            selected = st.selectbox("🎯 상세 정보를 확인할 지역을 선택하세요", valid_regions)
-            
-            rd_latest = target_df[target_df['지역'] == selected].copy()
-            rd_latest = rd_latest.sort_values(by='지지율', ascending=False).reset_index(drop=True)
-            if not rd_latest.empty:
-                rd_latest['텍스트표시'] = rd_latest['지지율'].apply(lambda x: f"{float(x):.1f}%")
-            
-            cmap = {p: ('#004EA2' if '민주' in str(p) else '#E61E2B' if '국힘' in str(p) else '#808080') for p in rd_latest.get('정당', pd.Series()).unique()}
+        rd_latest = target_df[target_df['지역'] == selected].sort_values(by='지지율', ascending=False).reset_index(drop=True)
+        if not rd_latest.empty:
+            rd_latest['텍스트표시'] = rd_latest['지지율'].apply(lambda x: f"{x:.1f}%")
+            cmap = {p: ('#004EA2' if '민주' in str(p) else '#E61E2B' if '국힘' in str(p) else '#808080') for p in rd_latest['정당'].unique()}
 
             tab1, tab2 = st.tabs(["📊 지지율 요약", "📈 시계열 지지율 추이"])
             with tab1:
@@ -195,21 +229,17 @@ if is_valid:
                         st.metric(label="1-2위 격차", value=f"{rd_latest.iloc[0]['지지율'] - rd_latest.iloc[1]['지지율']:.1f}%p")
                         st.write(f"🏆 **1위:** {rd_latest.iloc[0]['후보']}")
                         st.write(f"🥈 **2위:** {rd_latest.iloc[1]['후보']}")
-                    elif len(rd_latest) == 1:
-                        st.metric(label="1-2위 격차", value="단독 출마")
+                    else:
                         st.write(f"🏆 **1위:** {rd_latest.iloc[0]['후보']}")
                 with c3: 
-                    display_df = rd_latest[['후보', '정당', '지지율']].copy()
-                    display_df['지지율'] = display_df['지지율'].round(1)
-                    st.dataframe(display_df, hide_index=True, use_container_width=True)
+                    st.dataframe(rd_latest[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
             
             with tab2:
                 if app_mode == "🎛️ 가상 시나리오 시뮬레이터":
                     st.info("💡 시뮬레이터 모드에서는 시계열 그래프가 비활성화됩니다.")
                 else:
-                    st.write(f"### {selected} 후보별 지지율 변화 추이")
-                    rd_all = df_current_all[df_current_all['지역'] == selected].copy().sort_values(by=['조사일자', '지지율']).reset_index(drop=True)
+                    rd_all = df_current_all[(df_current_all['지역'] == selected) & (df_current_all['기초지역'] == '전체')].sort_values('조사일자')
                     if len(rd_all['조사일자'].unique()) > 1:
-                        st.plotly_chart(px.line(rd_all, x='조사일자', y='지지율', color='정당', markers=True, line_shape='spline', color_discrete_map=cmap), use_container_width=True)
+                        st.plotly_chart(px.line(rd_all, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=cmap), use_container_width=True)
                     else:
-                        st.info("💡 구글 시트에 날짜가 다른 데이터를 쌓으면 추이 그래프가 그려집니다.")
+                        st.info("💡 동일 지역에 날짜가 다른 데이터가 쌓이면 추이 그래프가 나타납니다.")
