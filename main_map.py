@@ -11,9 +11,11 @@ from streamlit_gsheets import GSheetsConnection
 # ==========================================
 st.set_page_config(page_title="T-Bridge Election Dashboard", page_icon="🌉", layout="wide")
 
-BRAND_INDIGO = "#1A237E"
-GRAY_LIGHT = "#E0E0E0" 
-HIGHLIGHT_COLOR = "#FFD700" # 하이라이트용 금색
+BRAND_INDIGO = "#1A237E" # 메인 남색
+GRAY_LIGHT = "#E0E0E0"   # 데이터 없는 지역
+# [수정] 클릭 시 하이라이트 컬러 (파란색 버튼과 조화되는 연한 파랑)
+SEL_FILL = "#D1E3FF"     # 선택된 칸의 연한 하늘색 배경
+SEL_LINE = "#2979FF"     # 선택된 칸의 테두리 색상
 
 st.markdown(f"""
 <style>
@@ -56,11 +58,21 @@ def draw_hexagon_map(df, title_text, highlight_regions=None, mode="normal", acti
     for region, (col, row) in HEX_MAP.items():
         cx, cy, x_coords, y_coords = get_hexagon_path(col, row)
         
+        # [수정] 모드별 컬러 로직 고도화
+        is_selected = region in highlight_regions
+        
         if mode == "status":
             is_active = region in active_regions
-            color = BRAND_INDIGO if is_active else GRAY_LIGHT
-            text_color = "white" if is_active else "#9E9E9E"
-            hover_text = f"<b>{region}</b><br>{'데이터 분석 가능' if is_active else '데이터 업데이트 대기 중'}"
+            if is_selected:
+                color = SEL_FILL # 선택된 곳은 연한 하늘색
+                text_color = BRAND_INDIGO
+            elif is_active:
+                color = BRAND_INDIGO # 데이터 있는 곳은 진한 남색
+                text_color = "white"
+            else:
+                color = GRAY_LIGHT # 없는 곳은 회색
+                text_color = "#9E9E9E"
+            hover_text = f"<b>{region}</b><br>{'선택됨' if is_selected else '분석 가능' if is_active else '대기 중'}"
         else:
             color, text_color = '#F0F2F6', BRAND_INDIGO
             hover_text = f"<b>{region}</b><br>데이터 없음"
@@ -72,15 +84,19 @@ def draw_hexagon_map(df, title_text, highlight_regions=None, mode="normal", acti
                     gap = win.get('지지율', 0) - region_all.iloc[1].get('지지율', 0) if len(region_all) > 1 else 0
                     if '민주' in party_orig:
                         alpha = max(0.3, min(gap / 25.0, 1.0))
-                        color, text_color = f'rgba(0, 78, 162, {alpha})', 'white' if alpha >= 0.5 else BRAND_INDIGO
-                    elif '국힘' in party_orig or '국민의힘' in party_orig: color, text_color = '#E61E2B', 'white'
-                    else: color, text_color = '#808080', 'white'
+                        color = f'rgba(0, 78, 162, {alpha})'
+                        text_color = 'white' if alpha >= 0.5 else BRAND_INDIGO
+                    elif '국힘' in party_orig or '국민의힘' in party_orig:
+                        color = '#E61E2B'
+                        text_color = 'white'
+                    else:
+                        color = '#808080'
+                        text_color = 'white'
                     cand_list = [f"• {r['후보']}({str(r['정당']).split('(')[0].strip()}): {r['지지율']:.1f}%" for _, r in region_all.iterrows()]
                     hover_text = f"<b>[{region}]</b><br>{'<br>'.join(cand_list)}<br>------------------<br><b>격차: {gap:.1f}%p</b>"
 
-        # 하이라이트(금색 테두리) 처리
-        is_highlight = region in highlight_regions
-        line_color, line_width = (HIGHLIGHT_COLOR, 6) if is_highlight else ('white', 2)
+        # [수정] 하이라이트 테두리 색상 및 두께 조정
+        line_color, line_width = (SEL_LINE, 7) if is_selected else ('white', 2)
 
         fig.add_trace(go.Scatter(x=x_coords, y=y_coords, fill='toself', fillcolor=color, mode='lines', line=dict(color=line_color, width=line_width), name=region, text=hover_text, hoverinfo='text'))
         fig.add_trace(go.Scatter(x=[cx], y=[cy], mode='text', text=[f"<b>{region}</b>"], textfont=dict(color=text_color, size=15, family="Noto Sans KR"), hoverinfo='skip'))
@@ -125,20 +141,18 @@ is_valid = df_current_latest is not None and not df_current_latest.empty
 st.markdown("""<div class='main-header'><h1>T-Bridge 헥사곤 판세 분석 솔루션 (Live)</h1></div>""", unsafe_allow_html=True)
 
 # ------------------------------------------
-# [수정된 모드] 시군구 판세 분석
+# 시군구 판세 분석 모드
 # ------------------------------------------
 if app_mode == "시군구 판세 분석":
     st.subheader("📍 기초자치단체별 상세 판세 분석")
     
     if is_valid:
-        # 데이터가 있는 지역 리스트
         active_regions = df_current_latest[df_current_latest['기초지역'] != '전체']['지역'].unique().tolist()
         
-        # 세션 상태 초기화
         if 'selected_region' not in st.session_state:
             st.session_state['selected_region'] = '전남' if '전남' in active_regions else '서울'
 
-        # --- [변경] 버튼을 먼저 배치하여 선택값을 먼저 받습니다 ---
+        # 버튼 그리드
         st.write("분석할 지역을 클릭하세요:")
         all_regions_list = sorted(HEX_MAP.keys())
         cols = st.columns(6)
@@ -148,18 +162,17 @@ if app_mode == "시군구 판세 분석":
                 if st.button(f"{prefix}{reg}", key=f"btn_{reg}", use_container_width=True,
                              type="primary" if st.session_state['selected_region'] == reg else "secondary"):
                     st.session_state['selected_region'] = reg
-                    st.rerun() # 클릭 즉시 화면 갱신
+                    st.rerun()
         
         st.divider()
         
-        # --- [변경] 지도를 버튼 아래에 배치하고 현재 선택된 지역을 하이라이트합니다 ---
+        # [수정] 지도 하이라이트 반영
         sel_reg = st.session_state['selected_region']
-        st.plotly_chart(draw_hexagon_map(None, f"🔍 {sel_reg} 분석 중 (금색 테두리)", 
+        st.plotly_chart(draw_hexagon_map(None, f"🔍 {sel_reg} 상세 분석 모드", 
                                          mode="status", 
                                          active_regions=active_regions,
                                          highlight_regions=[sel_reg]), use_container_width=True)
 
-        # 상세 결과 출력
         sub_df = df_current_latest[(df_current_latest['지역'] == sel_reg) & (df_current_latest['기초지역'] != '전체')]
         
         if not sub_df.empty:
@@ -171,7 +184,7 @@ if app_mode == "시군구 판세 분석":
         else:
             st.warning(f"🔔 {sel_reg} 지역의 상세 데이터는 현재 업데이트 대기 중입니다.")
 
-# (나머지 모드들은 기존과 동일)
+# (현행 판세 및 기타 모드는 기존과 동일)
 elif app_mode == "현행 판세 분석":
     df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
     st.plotly_chart(draw_hexagon_map(df_prov, "현행 전국 판세 실시간 데이터"), use_container_width=True)
