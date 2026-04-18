@@ -12,6 +12,9 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="T-Bridge Election Dashboard", page_icon="🌉", layout="wide")
 
 BRAND_INDIGO = "#1A237E" 
+GRAY_LIGHT = "#F5F5F5"   
+SEL_FILL = "#E3F2FD"     # 선택된 지역 배경 (연한 파스텔 블루)
+SEL_LINE = "#1565C0"     # 선택된 지역 테두리 (진한 파랑)
 
 st.markdown(f"""
 <style>
@@ -40,35 +43,28 @@ def get_hexagon_path(col, row, radius=1):
         x.append(cx + radius * math.cos(a)); y.append(cy + radius * math.sin(a))
     return cx, cy, x + [x[0]], y + [y[0]]
 
-# [V6.5] 절대 빨간색이 나올 수 없는 구조로 재설계
+# [V6.6] 색상 최우선 순위 보장 엔진
 def final_visual_map_engine(df, title_text, highlight_region="", mode="normal", active_regions=None):
     if active_regions is None: active_regions = []
     
-    # 내부 컬러 변수 (글로벌 캐시 방지)
-    LOCAL_SKY = "#E3F2FD"
-    LOCAL_BLUE = "#1565C0"
-    LOCAL_NAVY = "#1A237E"
-    LOCAL_GRAY = "#F5F5F5"
-
     fig = go.Figure()
     for region, (col, row) in HEX_MAP.items():
         cx, cy, x_coords, y_coords = get_hexagon_path(col, row)
         
         # 기본값
         f_color = '#F0F2F6'
-        t_color = LOCAL_NAVY
+        t_color = BRAND_INDIGO
         l_color = "white"
         l_width = 2
         h_text = f"<b>{region}</b>"
 
-        # 1. 시군구 현황 모드
+        # 1단계: 시군구 현황 모드
         if mode == "status":
             is_active = region in active_regions
-            f_color = LOCAL_NAVY if is_active else LOCAL_GRAY
+            f_color = BRAND_INDIGO if is_active else GRAY_LIGHT
             t_color = "white" if is_active else "#9E9E9E"
-            h_text += f"<br>{'분석 가능' if is_active else '업데이트 대기'}"
         
-        # 2. 판세 결과 모드
+        # 2단계: 판세 결과 모드
         else:
             if df is not None and not df.empty:
                 r_all = df[df['지역'] == region].sort_values(by='지지율', ascending=False)
@@ -80,31 +76,31 @@ def final_visual_map_engine(df, title_text, highlight_region="", mode="normal", 
                     else: f_color = '#808080'; t_color = 'white'
                     h_text += f"<br>1위: {win['후보']}"
 
-        # 3. [초강력 우선순위] 선택된 지역 덮어씌우기
+        # 3단계: [강제 덮어씌우기] 선택된 지역
         if region == highlight_region:
-            f_color = LOCAL_SKY   # 무조건 하늘색
-            l_color = LOCAL_BLUE  # 무조건 파란 테두리
-            l_width = 10          # 무조건 두껍게
-            t_color = LOCAL_NAVY
-            h_text = f"<b>{region} (현재 선택됨)</b>"
+            f_color = SEL_FILL   
+            l_color = SEL_LINE  
+            l_width = 10         
+            t_color = BRAND_INDIGO
+            h_text = f"<b>{region} (선택됨)</b>"
 
         fig.add_trace(go.Scatter(x=x_coords, y=y_coords, fill='toself', fillcolor=f_color, mode='lines', 
                                  line=dict(color=l_color, width=l_width), name=region, text=h_text, hoverinfo='text'))
         fig.add_trace(go.Scatter(x=[cx], y=[cy], mode='text', text=[f"<b>{region}</b>"], 
                                  textfont=dict(color=t_color, size=15, family="Noto Sans KR"), hoverinfo='skip'))
 
-    fig.update_layout(title=dict(text=f"<b>{title_text}</b>", font=dict(size=22, color=LOCAL_NAVY), x=0.5), xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x", scaleratio=1), height=550, plot_bgcolor='rgba(0,0,0,0)', showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
+    fig.update_layout(title=dict(text=f"<b>{title_text}</b>", font=dict(size=22, color=BRAND_INDIGO), x=0.5), xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x", scaleratio=1), height=550, plot_bgcolor='rgba(0,0,0,0)', showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
     return fig
 
 # ==========================================
-# 6. 데이터 및 사이드바
+# 6. 데이터 로드 및 사이드바
 # ==========================================
 with st.sidebar:
     st.markdown(f"<h2 style='text-align: center; color: {BRAND_INDIGO};'>T-Bridge</h2>", unsafe_allow_html=True)
-    st.markdown("<div style='text-align:center; color:green; font-weight:bold;'>V6.5 (Final Ghost-Buster)</div>", unsafe_allow_html=True)
+    # [V6.6] 버전 표시 삭제 완료
     app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "시군구 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
     st.divider()
-    if st.button("🔄 캐시 강제 삭제 및 새로고침"):
+    if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
     st.divider()
@@ -134,16 +130,18 @@ is_valid = df_current_latest is not None and not df_current_latest.empty
 st.markdown("""<div class='main-header'><h1>T-Bridge 헥사곤 판세 분석 솔루션 (Live)</h1></div>""", unsafe_allow_html=True)
 
 # ------------------------------------------
-# 시군구 판세 분석 모드 (V6.5)
+# 각 모드별 상세 로직 구현
 # ------------------------------------------
-if app_mode == "시군구 판세 분석":
+if app_mode == "현행 판세 분석":
+    df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
+    st.plotly_chart(final_visual_map_engine(df_prov, "전국 광역 시·도별 판세 현황"), use_container_width=True)
+
+elif app_mode == "시군구 판세 분석":
     st.subheader("📍 기초자치단체별 상세 판세 분석")
-    
     if is_valid:
         active_regions = df_current_latest[df_current_latest['기초지역'] != '전체']['지역'].unique().tolist()
         if 'selected_region' not in st.session_state: st.session_state['selected_region'] = '전남'
-
-        st.write("분석할 지역을 클릭하세요:")
+        
         cols = st.columns(6)
         all_regs = sorted(HEX_MAP.keys())
         for i, reg in enumerate(all_regs):
@@ -156,31 +154,44 @@ if app_mode == "시군구 판세 분석":
         
         st.divider()
         sel_reg = st.session_state['selected_region']
-        
-        # [V6.5] 함수 이름을 바꿔서 강제로 새 로직을 타게 함
-        st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel_reg} 상세 분석 중", 
-                                             mode="status", 
-                                             active_regions=active_regions,
-                                             highlight_region=sel_reg), use_container_width=True)
+        st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel_reg} 상세 분석 중", mode="status", active_regions=active_regions, highlight_region=sel_reg), use_container_width=True)
 
         sub_df = df_current_latest[(df_current_latest['지역'] == sel_reg) & (df_current_latest['기초지역'] != '전체')]
-        
         if not sub_df.empty:
             st.markdown(f"### 🚩 {sel_reg} 상세 분석 결과")
             cmap = {'더불어민주당': '#004EA2', '국민의힘': '#E61E2B', '민주당': '#004EA2', '국힘': '#E61E2B'}
-            fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='정당', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"),
-                             title=f"[{sel_reg}] 기초자치단체별 지지율", barmode='group', color_discrete_map=cmap)
+            fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='정당', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"), barmode='group', color_discrete_map=cmap)
             st.plotly_chart(fig_sub, use_container_width=True)
-            
-            # [복구 완료] 시군구 상세 표
-            st.write("### 📋 기초지역별 상세 데이터 리스트")
-            st.dataframe(sub_df[['기초지역', '후보', '정당', '지지율']].sort_values(['기초지역', '지지율'], ascending=[True, False]), 
-                         hide_index=True, use_container_width=True)
+            st.write("### 📋 상세 데이터 리스트")
+            st.dataframe(sub_df[['기초지역', '후보', '정당', '지지율']].sort_values(['기초지역', '지지율'], ascending=[True, False]), hide_index=True, use_container_width=True)
         else:
-            st.warning(f"🔔 {sel_reg} 지역의 상세 데이터는 현재 업데이트 대기 중입니다.")
+            st.warning(f"🔔 {sel_reg} 지역의 기초 상세 데이터는 업데이트 대기 중입니다.")
 
-elif app_mode == "현행 판세 분석":
+elif app_mode == "2025 대선 비교 분석":
+    st.subheader("🗳️ 2025년 대선 vs 현재 판세 비교")
+    col1, col2 = st.columns(2)
     df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
-    st.plotly_chart(final_visual_map_engine(df_prov, "전국 광역 시·도별 판세 현황", mode="normal"), use_container_width=True)
+    with col1: st.plotly_chart(final_visual_map_engine(df_2025, "2025년 대선 결과"), use_container_width=True)
+    with col2: st.plotly_chart(final_visual_map_engine(df_prov, "현재 실시간 판세"), use_container_width=True)
+    st.info("💡 왼쪽은 2025년 대선 당시의 데이터이며, 오른쪽은 구글 시트에서 불러온 실시간 최신 데이터입니다.")
 
-# ... (이하 2025 대선 비교, 시뮬레이터 등은 final_visual_map_engine을 사용하도록 수정됨)
+elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
+    st.subheader("🎛️ 전국 단위 지지율 시뮬레이터")
+    if not is_valid: 
+        st.warning("데이터를 불러오는 중입니다...")
+    else:
+        df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'].copy()
+        col_s1, col_s2 = st.columns(2)
+        with col_s1: adj_minju = st.slider("🔵 민주당 지지율 일괄 조정 (%p)", -15.0, 15.0, 0.0, 0.5)
+        with col_s2: adj_gukhim = st.slider("🔴 국민의힘 지지율 일괄 조정 (%p)", -15.0, 15.0, 0.0, 0.5)
+
+        df_sim = df_prov.reset_index(drop=True)
+        for idx, row in df_sim.iterrows():
+            p = str(row['정당'])
+            if '민주' in p: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_minju)
+            elif '국힘' in p or '국민의힘' in p: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_gukhim)
+
+        st.plotly_chart(final_visual_map_engine(df_sim, "시뮬레이션 반영 전국 판세"), use_container_width=True)
+        st.markdown("---")
+        st.write("### 📊 시뮬레이션 상세 수치 (광역)")
+        st.dataframe(df_sim[['지역', '후보', '정당', '지지율']].sort_values(['지역', '지지율'], ascending=[True, False]), hide_index=True, use_container_width=True)
