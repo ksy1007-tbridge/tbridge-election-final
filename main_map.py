@@ -92,6 +92,13 @@ with st.sidebar:
     if st.button("🔄 데이터 새로고침"):
         st.cache_data.clear()
         st.rerun()
+    
+    # ------------------------------------------
+    # 법적 고지 문구 추가 (스타일 A)
+    # ------------------------------------------
+    st.divider()
+    st.caption("⚠️ **법적 고지**")
+    st.caption("인용된 조사의 자세한 내용은 중앙선거여론조사심의위원회 홈페이지를 참조하시기 바랍니다.")
 
 @st.cache_data(ttl=60) # 캐시를 1분으로 줄여서 즉각 반영되게 합니다.
 def load_data_from_gsheets():
