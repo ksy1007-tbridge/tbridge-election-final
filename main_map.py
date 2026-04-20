@@ -10,7 +10,7 @@ from streamlit_gsheets import GSheetsConnection
 # ==========================================
 st.set_page_config(page_title="T-Bridge Election Dashboard", page_icon="🌉", layout="wide")
 
-# [V7.9] 정당 노출 우선순위 딕셔너리 (숫자가 작을수록 먼저 노출)
+# 정당 노출 우선순위 (1: 민주당 계열, 2: 국힘 계열)
 PARTY_PRIORITY = {
     '더불어민주당': 1, '민주당': 1, '민주': 1,
     '국민의힘': 2, '국힘': 2,
@@ -49,11 +49,14 @@ st.markdown(f"""
 HEX_MAP = {'경기': (1, 6), '강원': (2, 6), '인천': (0, 5), '서울': (1, 5), '충북': (2, 5), '대전': (1, 4), '세종': (2, 4), '경북': (3, 4), '전북': (0, 3), '충남': (1, 3), '대구': (2, 3), '울산': (3, 3), '전남': (0, 2), '광주': (1, 2), '경남': (2, 2), '부산': (3, 2), '제주': (0, 1)}
 NAME_MAPPING = {'서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구', '인천광역시': '인천', '광주광역시': '광주', '대전광역시': '대전', '울산광역시': '울산', '세종특별자치시': '세종', '세종시': '세종', '경기도': '경기', '강원도': '강원', '강원특별자치도': '강원', '충청북도': '충북', '충청남도': '충남', '전라북도': '전북', '전북특별자치도': '전북', '전라남도': '전남', '경상북도': '경북', '경상남도': '경남', '제주특별자치도': '제주', '제주도': '제주'}
 
+# 2025 대선 비교 데이터
+past_data_list = [['서울', '이재명', '민주당', 52.0], ['서울', '김문수', '국힘', 45.0], ['경기', '이재명', '민주당', 54.0], ['경기', '김문수', '국힘', 43.0], ['인천', '이재명', '민주당', 53.0], ['인천', '김문수', '국힘', 42.0], ['강원', '김문수', '국힘', 55.0], ['강원', '이재명', '민주당', 40.0], ['충북', '김문수', '국힘', 49.0], ['충북', '이재명', '민주당', 47.0], ['충남', '이재명', '민주당', 50.0], ['충남', '김문수', '국힘', 46.0], ['대전', '이재명', '민주당', 51.0], ['대전', '김문수', '국힘', 45.0], ['세종', '이재명', '민주당', 53.0], ['세종', '김문수', '국힘', 41.0], ['전북', '이재명', '민주당', 85.0], ['전북', '김문수', '국힘', 10.0], ['광주', '이재명', '민주당', 88.0], ['광주', '김문수', '국힘', 8.0], ['전남', '이재명', '민주당', 86.0], ['전남', '김문수', '국힘', 9.0], ['경북', '김문수', '국힘', 75.0], ['경북', '이재명', '민주당', 20.0], ['대구', '김문수', '국힘', 72.0], ['대구', '이재명', '민주당', 23.0], ['경남', '김문수', '국힘', 58.0], ['경남', '이재명', '민주당', 38.0], ['부산', '김문수', '국힘', 56.0], ['부산', '이재명', '민주당', 40.0], ['울산', '김문수', '국힘', 53.0], ['울산', '이재명', '민주당', 43.0], ['제주', '이재명', '민주당', 55.0], ['제주', '김문수', '국힘', 41.0]]
+df_2025 = pd.DataFrame(past_data_list, columns=['지역', '후보', '정당', '지지율'])
+
 # ==========================================
-# 2. 도움 함수 (V7.9 정렬 및 색상 로직)
+# 2. 도움 함수 (정렬 및 색상)
 # ==========================================
 def get_dynamic_color_map(df):
-    """후보별로 정당을 확인하여 블루/레드 색상을 매핑한 딕셔너리 반환"""
     color_map = {}
     if df is not None and not df.empty:
         for _, row in df.iterrows():
@@ -65,34 +68,18 @@ def get_dynamic_color_map(df):
     return color_map
 
 def get_sorted_candidate_order(df):
-    """[V7.9] 데이터프레임에서 후보의 정당을 확인하여 노출 우선순위대로 후보 이름 리스트 반환"""
-    if df is None or df.empty:
-        return []
-    
-    # 해당 데이터프레임에 있는 유니크한 후보 리스트 추출
+    if df is None or df.empty: return []
     cands_in_data = df['후보'].unique()
-    
     cand_priority_list = []
     for cand in cands_in_data:
-        # 해당 후보의 정당 확인 (최신 데이터라고 가정하고 첫번째 행 사용)
         party_str = str(df[df['후보'] == cand]['정당'].iloc[0])
-        
-        # 기본 우선순위 (기타)
         priority = PARTY_PRIORITY['기타']
-        
-        # 키워드 매핑
         if '민주' in party_str: priority = PARTY_PRIORITY['민주당']
         elif '국힘' in party_str or '국민의힘' in party_str: priority = PARTY_PRIORITY['국민의힘']
-        
         cand_priority_list.append({'후보': cand, 'priority': priority})
-        
-    # 우선순위대로 정렬된 데이터프레임 생성
     sort_df = pd.DataFrame(cand_priority_list).sort_values('priority')
-    
-    # 정렬된 후보 이름 리스트 리턴
     return sort_df['후보'].tolist()
 
-# 3. 지도 렌더링 엔진
 def get_hexagon_path(col, row, radius=1):
     cx, cy = col * math.sqrt(3) * radius + (row % 2 == 1) * (math.sqrt(3)/2) * radius, row * 1.5 * radius
     x, y = [], []
@@ -134,7 +121,7 @@ def final_visual_map_engine(df, title_text, highlight_region="", mode="normal", 
     fig.update_layout(title=dict(text=f"<b>{title_text}</b>", font=dict(size=22, color=BRAND_INDIGO), x=0.5), xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x", scaleratio=1), height=550, plot_bgcolor='rgba(0,0,0,0)', showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
     return fig
 
-# 4. 데이터 로드
+# 3. 데이터 로드
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -154,8 +141,9 @@ def load_data():
         return None, None, None
 
 df_all, df_latest, df_prov = load_data()
+is_valid = df_latest is not None
 
-# 5. 사이드바
+# 4. 사이드바
 with st.sidebar:
     st.markdown(f"<h2 style='text-align: center; color: {BRAND_INDIGO};'>T-Bridge</h2>", unsafe_allow_html=True)
     app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "시군구 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
@@ -171,7 +159,7 @@ st.markdown("""<div class='main-header'><h1>T-Bridge 헥사곤 판세 분석 솔
 if 'selected_region' not in st.session_state:
     st.session_state['selected_region'] = '서울'
 
-# 6. 모드별 상세 구현
+# 5. 모드별 상세 구현
 if app_mode == "현행 판세 분석":
     st.subheader("📈 실시간 전국 광역 시·도별 판세")
     cols = st.columns(6); all_regs = sorted(HEX_MAP.keys())
@@ -187,34 +175,26 @@ if app_mode == "현행 판세 분석":
 
     st.divider()
     st.markdown(f"### 🚩 {sel_reg} 광역 상세 분석")
-    
     reg_hist = df_all[(df_all['지역'] == sel_reg) & (df_all['기초지역'] == '전체')].sort_values('조사일자')
     dynamic_colors = get_dynamic_color_map(reg_hist)
 
     if len(reg_hist['조사일자'].unique()) > 1:
-        # [V7.9] 선그래프는 범례 순서를 고정하기 위해 color_discrete_map을 사용 (Plotly 특성상 완벽한 고정은 category_orders 필요)
         fig_trend = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True,
                             title=f"[{sel_reg}] 지지율 추세 변화", color_discrete_map=dynamic_colors)
         st.plotly_chart(fig_trend, use_container_width=True)
     
     reg_latest = df_prov[df_prov['지역'] == sel_reg]
     if not reg_latest.empty:
-        # [V7.9 핵심 수정] '후보' 카테고리의 노출 순서를 정당 우선순위대로 강제 고정
         fixed_cand_order = get_sorted_candidate_order(reg_latest)
-        
         fig_bar = px.bar(reg_latest, x='후보', y='지지율', color='후보', text=reg_latest['지지율'].apply(lambda x: f"{x:.1f}%"),
                          title=f"[{sel_reg}] 최신 지지율 현황", color_discrete_map=dynamic_colors,
-                         category_orders={'후보': fixed_cand_order}) # 정렬 순서 강제 주입
-        
+                         category_orders={'후보': fixed_cand_order})
         st.plotly_chart(fig_bar, use_container_width=True)
-        # 표의 정렬 순서도 변경하여 일관성 확보
-        df_table_fixed = reg_latest[['후보', '정당', '지지율']].reset_index(drop=True)
-        df_table_fixed['후보'] = pd.Categorical(df_table_fixed['후보'], categories=fixed_cand_order, ordered=True)
-        st.dataframe(df_table_fixed.sort_values('후보'), hide_index=True, use_container_width=True)
+        st.dataframe(reg_latest[['후보', '정당', '지지율']].sort_values('지지율', ascending=False), hide_index=True, use_container_width=True)
 
 elif app_mode == "시군구 판세 분석":
     st.subheader("📍 기초자치단체별 상세 판세 분석")
-    if df_latest is not None:
+    if is_valid:
         active_regions = df_latest[df_latest['기초지역'] != '전체']['지역'].unique().tolist()
         cols = st.columns(6); all_regs = sorted(HEX_MAP.keys())
         for i, reg in enumerate(all_regs):
@@ -226,33 +206,4 @@ elif app_mode == "시군구 판세 분석":
                     st.rerun() 
 
         sel_reg = st.session_state['selected_region']
-        st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel_reg} 시군구 분석", mode="status", active_regions=active_regions, highlight_region=sel_reg), use_container_width=True)
-
-        st.divider()
-        reg_hist = df_all[(df_all['지역'] == sel_reg) & (df_all['기초지역'] == '전체')].sort_values('조사일자')
-        dynamic_colors = get_dynamic_color_map(reg_hist)
-
-        if len(reg_hist['조사일자'].unique()) > 1:
-            st.markdown(f"### 📈 {sel_reg} 광역 지지율 추세 변화")
-            fig_trend = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=dynamic_colors)
-            st.plotly_chart(fig_trend, use_container_width=True)
-
-        sub_df = df_latest[(df_latest['지역'] == sel_reg) & (df_latest['기초지역'] != '전체')]
-        if not sub_df.empty:
-            st.markdown(f"### 🚩 {sel_reg} 시군구별 상세 분석")
-            # 시군구 바 차트도 후보별로 색상 매핑 및 정렬
-            dynamic_sub_colors = get_dynamic_color_map(sub_df)
-            
-            # [V7.9 핵심 수정] 시군구 분석 바 차트에도 정당 노출 순서 강제 고정
-            fixed_sub_cand_order = get_sorted_candidate_order(sub_df)
-            
-            fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='후보', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"), 
-                             barmode='group', color_discrete_map=dynamic_sub_colors,
-                             category_orders={'후보': fixed_sub_cand_order}) # 정렬 순서 강제 주입
-            
-            st.plotly_chart(fig_sub, use_container_width=True)
-            
-            # 표의 정렬 순서도 일치
-            df_table_fixed_sub = sub_df[['기초지역', '후보', '정당', '지지율']].reset_index(drop=True)
-            df_table_fixed_sub['후보'] = pd.Categorical(df_table_fixed_sub['후보'], categories=fixed_sub_cand_order, ordered=True)
-            st.dataframe(df_table_fixed_sub.sort_values(['기초지역', '후보']), hide_index=True, use_container_width=True)
+        st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel
