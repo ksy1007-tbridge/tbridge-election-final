@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import math
+import io
 from streamlit_gsheets import GSheetsConnection
 
 # ==========================================
@@ -12,19 +13,20 @@ st.set_page_config(page_title="T-Bridge Election Dashboard", page_icon="🌉", l
 
 BRAND_INDIGO = "#1A237E" 
 GRAY_LIGHT = "#F5F5F5"   
-SEL_FILL = "#E3F2FD"     
-SEL_LINE = "#1565C0"     
+SEL_FILL = "#E3F2FD"     # 선택 지역 배경
+SEL_LINE = "#1565C0"     # 선택 지역 테두리
 
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
     html, body, [class*="css"] {{ font-family: 'Noto Sans KR', sans-serif; }}
     
-    /* 선택된 버튼(Primary)을 빨간색에서 남색으로 강제 변경 */
+    /* 선택된 버튼(Primary) 디자인 고정 */
     button[kind="primary"] {{
         background-color: {BRAND_INDIGO} !important;
         border-color: {BRAND_INDIGO} !important;
         color: white !important;
+        font-weight: bold !important;
     }}
     .main-header {{
         background-color: white; padding: 20px; border-radius: 10px;
@@ -34,7 +36,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# 2. 고정 데이터
+# 2. 고정 데이터 (맵 좌표 및 2025 대선)
 HEX_MAP = {'경기': (1, 6), '강원': (2, 6), '인천': (0, 5), '서울': (1, 5), '충북': (2, 5), '대전': (1, 4), '세종': (2, 4), '경북': (3, 4), '전북': (0, 3), '충남': (1, 3), '대구': (2, 3), '울산': (3, 3), '전남': (0, 2), '광주': (1, 2), '경남': (2, 2), '부산': (3, 2), '제주': (0, 1)}
 NAME_MAPPING = {'서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구', '인천광역시': '인천', '광주광역시': '광주', '대전광역시': '대전', '울산광역시': '울산', '세종특별자치시': '세종', '세종시': '세종', '경기도': '경기', '강원도': '강원', '강원특별자치도': '강원', '충청북도': '충북', '충청남도': '충남', '전라북도': '전북', '전북특별자치도': '전북', '전라남도': '전남', '경상북도': '경북', '경상남도': '경남', '제주특별자치도': '제주', '제주도': '제주'}
 
@@ -84,7 +86,7 @@ def final_visual_map_engine(df, title_text, highlight_region="", mode="normal", 
     return fig
 
 # ==========================================
-# 4. 데이터 로드 및 사이드바
+# 4. 데이터 로드 및 사이드바 (업로드 메뉴 복구)
 # ==========================================
 @st.cache_data(ttl=60)
 def load_data_from_gsheets():
@@ -100,35 +102,59 @@ def load_data_from_gsheets():
         df_latest = df_all.drop_duplicates(subset=['지역', '기초지역', '후보'], keep='last').copy()
         return df_all, df_latest
     except Exception as e:
-        st.error(f"데이터 연결 에러: {e}")
+        st.error(f"구글 시트 연결 에러: {e}")
         return None, None
 
-df_current_all, df_current_latest = load_data_from_gsheets()
-is_valid = df_current_latest is not None and not df_current_latest.empty
+df_all, df_latest = load_data_from_gsheets()
 
 with st.sidebar:
     st.markdown(f"<h2 style='text-align: center; color: {BRAND_INDIGO};'>T-Bridge</h2>", unsafe_allow_html=True)
     app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "시군구 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
+    
     st.divider()
-    if st.button("🧹 전체 캐시 강제 삭제"):
+    st.write("📂 **데이터 관리**")
+    
+    # 1. 새로고침 버튼 복구
+    if st.button("🔄 실시간 데이터 새로고침", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
+    
+    # 2. 캐시 삭제 버튼 유지
+    if st.button("🧹 시스템 캐시 삭제", use_container_width=True):
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        st.rerun()
+
+    # 3. CSV 업로드 기능 추가 (혹시 모를 상황 대비)
+    uploaded_file = st.file_uploader("📁 CSV 데이터 업로드", type="csv")
+    if uploaded_file is not None:
+        try:
+            df_up = pd.read_csv(uploaded_file)
+            df_up.columns = ['조사일자', '지역', '기초지역', '후보', '지지율', '정당']
+            df_up['지역'] = df_up['지역'].astype(str).str.strip().replace(NAME_MAPPING)
+            df_up['기초지역'] = df_up['기초지역'].fillna('전체')
+            df_latest = df_up.drop_duplicates(subset=['지역', '기초지역', '후보'], keep='last').copy()
+            st.success("임시 데이터 업로드 완료!")
+        except:
+            st.error("파일 형식이 맞지 않습니다.")
+
     st.divider()
-    st.caption("⚠️ **법적 고지**")
-    st.caption("인용된 조사의 자세한 내용은 중앙선거여론조사심의위원회 홈페이지를 참조하시기 바랍니다.")
+    st.caption("⚠️ 인용 조사는 중앙선거여론조사심의위원회 참조")
 
 st.markdown("""<div class='main-header'><h1>T-Bridge 헥사곤 판세 분석 솔루션 (Live)</h1></div>""", unsafe_allow_html=True)
 
 # ==========================================
-# 5. 모드별 메인 화면
+# 5. 메인 화면 구현 (전체 복구)
 # ==========================================
+is_valid = df_latest is not None and not df_latest.empty
+
 if app_mode == "현행 판세 분석":
-    df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
-    st.plotly_chart(final_visual_map_engine(df_prov, "실시간 전국 광역 시·도별 판세 현황"), use_container_width=True)
+    df_prov = df_latest[df_latest['기초지역'] == '전체'] if is_valid else None
+    st.plotly_chart(final_visual_map_engine(df_prov, "실시간 전국 광역 시·도별 판세"), use_container_width=True)
 
 elif app_mode == "시군구 판세 분석":
     if is_valid:
-        active_regions = df_current_latest[df_current_latest['기초지역'] != '전체']['지역'].unique().tolist()
+        active_regions = df_latest[df_latest['기초지역'] != '전체']['지역'].unique().tolist()
         if 'selected_region' not in st.session_state: st.session_state['selected_region'] = '전남'
         
         st.write("분석할 지역을 클릭하세요:")
@@ -146,35 +172,30 @@ elif app_mode == "시군구 판세 분석":
         sel_reg = st.session_state['selected_region']
         st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel_reg} 상세 분석 중", mode="status", active_regions=active_regions, highlight_region=sel_reg), use_container_width=True)
 
-        sub_df = df_current_latest[(df_current_latest['지역'] == sel_reg) & (df_current_latest['기초지역'] != '전체')]
+        sub_df = df_latest[(df_latest['지역'] == sel_reg) & (df_latest['기초지역'] != '전체')]
         if not sub_df.empty:
             st.markdown(f"### 🚩 {sel_reg} 상세 분석 결과")
             cmap = {'더불어민주당': '#004EA2', '국민의힘': '#E61E2B', '민주당': '#004EA2', '국힘': '#E61E2B'}
             fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='정당', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"), barmode='group', color_discrete_map=cmap)
             st.plotly_chart(fig_sub, use_container_width=True)
-            
-            # 구문 오류가 났던 지점: 한 줄로 길게 쓰지 않고 끊어서 안전하게 배치했습니다.
-            st.write("### 📋 기초지역별 상세 데이터")
-            display_cols = ['기초지역', '후보', '정당', '지지율']
-            sorted_df = sub_df[display_cols].sort_values(['기초지역', '지지율'], ascending=[True, False])
-            st.dataframe(sorted_df, hide_index=True, use_container_width=True)
+            st.write("### 📋 상세 데이터")
+            st.dataframe(sub_df[['기초지역', '후보', '정당', '지지율']].sort_values(['기초지역', '지지율'], ascending=[True, False]), hide_index=True, use_container_width=True)
 
 elif app_mode == "2025 대선 비교 분석":
     col1, col2 = st.columns(2)
-    df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'] if is_valid else None
+    df_prov = df_latest[df_latest['기초지역'] == '전체'] if is_valid else None
     with col1: st.plotly_chart(final_visual_map_engine(df_2025, "🗳️ 2025년 대선 결과"), use_container_width=True)
     with col2: st.plotly_chart(final_visual_map_engine(df_prov, "📈 현재 실시간 판세"), use_container_width=True)
 
 elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
     if is_valid:
-        df_prov = df_current_latest[df_current_latest['기초지역'] == '전체'].copy()
+        df_prov = df_latest[df_latest['기초지역'] == '전체'].copy()
         col_s1, col_s2 = st.columns(2)
         with col_s1: adj_minju = st.slider("🔵 민주당 조정 (%p)", -15.0, 15.0, 0.0, 0.5)
         with col_s2: adj_gukhim = st.slider("🔴 국힘 조정 (%p)", -15.0, 15.0, 0.0, 0.5)
-        
         df_sim = df_prov.reset_index(drop=True)
         for idx, row in df_sim.iterrows():
             p = str(row['정당'])
             if '민주' in p: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_minju)
             elif '국힘' in p or '국민의힘' in p: df_sim.loc[idx, '지지율'] = max(0, row['지지율'] + adj_gukhim)
-        st.plotly_chart(final_visual_map_engine(df_sim, "시뮬레이션 결과 반영 판세"), use_container_width=True)
+        st.plotly_chart(final_visual_map_engine(df_sim, "시뮬레이션 결과 반영"), use_container_width=True)
