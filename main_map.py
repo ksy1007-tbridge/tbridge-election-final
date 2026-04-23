@@ -24,19 +24,15 @@ st.markdown(f"""
 HEX_MAP = {'경기': (1, 6), '강원': (2, 6), '인천': (0, 5), '서울': (1, 5), '충북': (2, 5), '대전': (1, 4), '세종': (2, 4), '경북': (3, 4), '전북': (0, 3), '충남': (1, 3), '대구': (2, 3), '울산': (3, 3), '전남': (0, 2), '광주': (1, 2), '경남': (2, 2), '부산': (3, 2), '제주': (0, 1)}
 NAME_MAPPING = {'서울특별시': '서울', '부산광역시': '부산', '대구광역시': '대구', '인천광역시': '인천', '광주광역시': '광주', '대전광역시': '대전', '울산광역시': '울산', '세종특별자치시': '세종', '세종시': '세종', '경기도': '경기', '강원도': '강원', '강원특별자치도': '강원', '충청북도': '충북', '충청남도': '충남', '전라북도': '전북', '전북특별자치도': '전북', '전라남도': '전남', '경상북도': '경북', '경상남도': '경남', '제주특별자치도': '제주', '제주도': '제주'}
 
-# 2. 도움 함수 (V9.3 키워드 매칭 강화)
+# 2. 도움 함수 (V9.4 정당 인식 및 색상 유지)
 def get_dynamic_color_map(df):
     c_map = {}
     if df is not None and not df.empty:
         for _, row in df.iterrows():
             cand, party = row['후보'], str(row['정당']).strip()
-            # [V9.3 수정] '국민' 키워드를 추가하여 "국민의힘" 정식 명칭 인식
-            if '민주' in party:
-                c_map[cand] = COLOR_MINJU
-            elif '국민' in party or '국힘' in party:
-                c_map[cand] = COLOR_GUKHIM
-            else:
-                c_map[cand] = COLOR_OTHER
+            if '민주' in party: c_map[cand] = COLOR_MINJU
+            elif '국민' in party or '국힘' in party: c_map[cand] = COLOR_GUKHIM
+            else: c_map[cand] = COLOR_OTHER
     return c_map
 
 def get_sorted_candidate_order(df):
@@ -44,7 +40,6 @@ def get_sorted_candidate_order(df):
     plist = []
     for c in df['후보'].unique():
         p_str = str(df[df['후보'] == c]['정당'].iloc[0])
-        # 정당 기반 우선순위 정렬
         pri = 1 if '민주' in p_str else (2 if ('국민' in p_str or '국힘' in p_str) else 99)
         plist.append({'후보': c, 'priority': pri})
     return pd.DataFrame(plist).sort_values('priority')['후보'].tolist()
@@ -81,7 +76,7 @@ def final_visual_map_engine(df, title_text, highlight_region="", mode="normal", 
     fig.update_layout(title=dict(text=f"<b>{title_text}</b>", x=0.5), xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x"), height=550, showlegend=False, margin=dict(l=0, r=0, t=60, b=0), plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# 3. 데이터 로드 (Poll of Polls 로직 유지)
+# 3. 데이터 로드
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -119,15 +114,19 @@ if app_mode == "현행 판세 분석":
         if cols[i%6].button(reg, key=f"p_{reg}", use_container_width=True, type="primary" if sel_reg == reg else "secondary"):
             st.session_state['selected_region'] = reg; st.rerun()
     st.plotly_chart(final_visual_map_engine(df_prov, "전국 광역 지지율 현황", highlight_region=sel_reg), use_container_width=True)
+    
     st.divider(); st.markdown(f"### 🚩 {sel_reg} 광역 상세 분석")
     reg_hist = df_all[(df_all['지역'] == sel_reg) & (df_all['기초지역'] == '전체')].sort_values('조사일자')
     d_colors, f_order = get_dynamic_color_map(reg_hist), get_sorted_candidate_order(reg_hist)
+    
     if not reg_hist.empty and len(reg_hist['조사일자'].unique()) > 1:
         st.plotly_chart(px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, title=f"[{sel_reg}] 지지율 추세", color_discrete_map=d_colors, category_orders={'후보': f_order}), use_container_width=True)
+    
     reg_latest = df_prov[df_prov['지역'] == sel_reg].copy()
     if not reg_latest.empty:
         fig_bar = px.bar(reg_latest, x='후보', y='지지율', color='후보', text=reg_latest['지지율'].apply(lambda x: f"{x:.1f}%"), title=f"[{sel_reg}] 최신 지지율 현황", color_discrete_map=d_colors, category_orders={'후보': f_order})
-        fig_bar.update_layout(bargap=0.2, bargroupgap=0.0)
+        # [V9.4] 막대 두께 및 간격 최적화
+        fig_bar.update_layout(bargap=0.15, bargroupgap=0.0) 
         st.plotly_chart(fig_bar, use_container_width=True)
         reg_latest['sort_key'] = reg_latest['정당'].apply(lambda x: 1 if '민주' in str(x) else (2 if '국민' in str(x) or '국힘' in str(x) else 99))
         st.dataframe(reg_latest.sort_values('sort_key')[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
@@ -141,21 +140,29 @@ elif app_mode == "시군구 판세 분석":
         if cols[i%6].button(f"{p}{reg}", key=f"m_{reg}", use_container_width=True, type="primary" if sel_reg == reg else "secondary"):
             st.session_state['selected_region'] = reg; st.rerun()
     st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel_reg} 시군구 분석", mode="status", active_regions=active_regs, highlight_region=sel_reg), use_container_width=True)
+    
     sub_df = df_latest[df_latest['지역'] == sel_reg].copy()
     if not sub_df.empty:
-        d_colors, f_order = get_dynamic_color_map(sub_df), get_sorted_candidate_order(sub_df)
+        # [V9.4] 해당 지역에 실제 존재하는 후보만으로 순서 재정의 (유령 공간 제거)
+        d_colors = get_dynamic_color_map(sub_df)
+        f_order = get_sorted_candidate_order(sub_df)
         sorted_muni = ['전체'] + sorted([m for m in sub_df['기초지역'].unique() if m != '전체'])
         
-        # [V9.3] 색상 인식이 정상화되면 bargroupgap=0.0 로직이 막대를 밀착시킵니다.
+        # [V9.4] 가독성 핵심 수정: bargap을 줄여 막대를 굵게, bargroupgap을 줄여 민주-국힘 밀착
         fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='후보', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"), barmode='group', color_discrete_map=d_colors, category_orders={'후보': f_order, '기초지역': sorted_muni})
-        fig_sub.update_layout(bargap=0.3, bargroupgap=0.0)
+        fig_sub.update_layout(
+            bargap=0.15,      # 그룹(지역구) 간의 간격 (줄일수록 막대가 굵어짐)
+            bargroupgap=0.05,  # 그룹 내 막대(후보) 간의 간격 (줄일수록 막대가 서로 붙음)
+            xaxis=dict(type='category')
+        )
         st.plotly_chart(fig_sub, use_container_width=True)
+        
         st.write("### 📋 상세 데이터 (전체 포함)")
         sub_df['m_key'] = sub_df['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
         sub_df['p_key'] = sub_df['정당'].apply(lambda x: 1 if '민주' in str(x) else (2 if '국민' in str(x) or '국힘' in str(x) else 99))
         st.dataframe(sub_df.sort_values(['m_key', '기초지역', 'p_key'])[['기초지역', '후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
-# 2025 대선 비교 (데이터 리스트 생략 - 위와 동일)
+# 2025 대선 비교 / 시뮬레이터 (동일 로직 유지)
 elif app_mode == "2025 대선 비교 분석":
     df_prov = df_latest[df_latest['기초지역'] == '전체']
     past_list = [['서울', '이재명', '민주당', 52.0], ['서울', '김문수', '국민의힘', 45.0], ['경기', '이재명', '민주당', 54.0], ['경기', '김문수', '국민의힘', 43.0]]
@@ -164,7 +171,6 @@ elif app_mode == "2025 대선 비교 분석":
     with c1: st.plotly_chart(final_visual_map_engine(df_2025_sub, "🗳️ 2025년 대선 결과"), use_container_width=True)
     with c2: st.plotly_chart(final_visual_map_engine(df_prov, "📈 현재 실시간 판세"), use_container_width=True)
 
-# 시나리오 시뮬레이터
 elif app_mode == "🎛️ 가상 시나리오 시뮬레이터":
     df_prov = df_latest[df_latest['기초지역'] == '전체'].copy()
     c1, c2 = st.columns(2)
