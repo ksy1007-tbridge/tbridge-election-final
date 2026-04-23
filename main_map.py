@@ -31,7 +31,14 @@ st.markdown(f"""
 HEX_MAP = {'경기':(1,6),'강원':(2,6),'인천':(0,5),'서울':(1,5),'충북':(2,5),'대전':(1,4),'세종':(2,4),'경북':(3,4),'전북':(0,3),'충남':(1,3),'대구':(2,3),'울산':(3,3),'전남':(0,2),'광주':(1,2),'경남':(2,2),'부산':(3,2),'제주':(0,1)}
 NAME_MAP = {'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','세종시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주','제주도':'제주'}
 
-# 2. 도움 함수
+# 도움 함수: 정당 순서 가중치
+def get_party_pri(p):
+    p = str(p)
+    if '민주' in p: return 1
+    if '국민' in p or '국힘' in p: return 2
+    return 99
+
+# 도움 함수: 헥사곤 경로
 def get_hex(col, row, r=1):
     cx, cy = col*math.sqrt(3)*r + (row%2==1)*(math.sqrt(3)/2)*r, row*1.5*r
     x, y = [], []
@@ -76,7 +83,7 @@ def load_data():
 
 d_all, d_lat = load_data()
 
-# 3. 메인 화면
+# 3. 메인 화면 로직
 if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
 sel = st.session_state.sel_reg
 
@@ -101,25 +108,24 @@ if mode == "시군구 판세":
     if not sub.empty:
         sub = sub[sub['지지율'] > 0]
         
-        # [V11.6 핵심 해결책] Graph Objects를 사용한 수동 레이아웃 제어
+        # [V11.7] Graph Objects 엔진 + 두께 살짝 조정 (0.4 -> 0.35)
         fig = go.Figure()
-        
-        # 1. 시군구 리스트 (X축)
         muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
         
-        # 2. 후보자별로 막대 추가
-        # 민주당 계열은 offset -0.4, 국민의힘 계열은 offset 0.0 부여 (두께 0.4)
-        for cand in sub['후보'].unique():
+        # 범례 순서 제어를 위해 정당 우선순위로 후보 정렬
+        sub['p_pri'] = sub['정당'].apply(get_party_pri)
+        sorted_candidates = sub.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique()
+
+        for cand in sorted_candidates:
             cand_df = sub[sub['후보'] == cand]
             party = str(cand_df['정당'].iloc[0])
             
-            # 정당별 색상 및 위치 결정
             if '민주' in party:
-                color = C_MINJU; pos_offset = -0.4
+                color = C_MINJU; pos_offset = -0.35
             elif '국민' in party or '국힘' in party:
                 color = C_GUKHIM; pos_offset = 0.0
             else:
-                color = C_OTHER; pos_offset = 0.4
+                color = C_OTHER; pos_offset = 0.35
                 
             fig.add_trace(go.Bar(
                 name=cand,
@@ -128,13 +134,12 @@ if mode == "시군구 판세":
                 text=cand_df['지지율'].apply(lambda x: f"{x:.1f}%"),
                 textposition='outside',
                 marker_color=color,
-                offset=pos_offset,  # 물리적 위치 강제 고정
-                width=0.4,          # 막대 두께 강제 고정
+                offset=pos_offset,  # 위치 강제 고정
+                width=0.35          # 두께 미세 조정
             ))
 
-        # 3. 레이아웃 최적화
         fig.update_layout(
-            barmode='overlay', # group이 아닌 overlay로 설정하여 offset으로 위치 제어
+            barmode='overlay',
             xaxis=dict(title=None, categoryorder='array', categoryarray=muni_list),
             yaxis=dict(title="지지율 (%)", range=[0, 100]),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -143,12 +148,26 @@ if mode == "시군구 판세":
             bargap=0.1
         )
         st.plotly_chart(fig, use_container_width=True)
+        
+        # [V11.7] 하단 상세 데이터 표 복구
+        st.write("### 📋 상세 데이터 현황")
+        sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
+        # 정당 우선순위와 기초지역(전체 우선) 순으로 정렬하여 표 노출
+        table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])[['기초지역', '후보', '정당', '지지율']]
+        st.dataframe(table_df, hide_index=True, use_container_width=True)
 
 elif mode == "현행 판세":
     d_prov = d_lat[d_lat['기초지역']=='전체']
     st.plotly_chart(draw_map(d_prov, "전국 광역 지지율 현황", highlight=sel), use_container_width=True)
+    
+    reg_lat = d_prov[d_prov['지역']==sel].copy()
+    if not reg_lat.empty:
+        st.write(f"### 📋 {sel} 상세 지지율")
+        reg_lat['p_pri'] = reg_lat['정당'].apply(get_party_pri)
+        st.dataframe(reg_lat.sort_values('p_pri')[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
 elif mode == "대선 비교":
+    # 2025 대선 비교 데이터 (전국 17개 시도 복구 로직 포함)
     p_list = [['서울','이재명','민주당',52],['서울','김문수','국힘',45],['경기','이재명','민주당',54],['경기','김문수','국힘',43]]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
     c1, c2 = st.columns(2)
