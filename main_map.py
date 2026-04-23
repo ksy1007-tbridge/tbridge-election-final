@@ -1,16 +1,15 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 import math
 from streamlit_gsheets import GSheetsConnection
 
-# 1. 페이지 설정 및 브랜딩 컬러 고정
+# 1. 페이지 설정 및 브랜딩 컬러
 st.set_page_config(page_title="T-Bridge Dashboard", page_icon="🌉", layout="wide")
 C_MINJU, C_GUKHIM, C_OTHER = "#004EA2", "#E61E2B", "#808080"
 B_INDIGO, S_FILL, S_LINE = "#1A237E", "#E3F2FD", "#1565C0"
 
-# CSS: 버튼 색상(인디고) 및 헤더 스타일 강제 지정
+# CSS: 버튼 색상 고정 및 헤더 스타일
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -33,16 +32,6 @@ HEX_MAP = {'경기':(1,6),'강원':(2,6),'인천':(0,5),'서울':(1,5),'충북':
 NAME_MAP = {'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','세종시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주','제주도':'제주'}
 
 # 2. 도움 함수
-def get_colors(df):
-    m = {}
-    if df is not None:
-        for _, r in df.iterrows():
-            c, p = r['후보'], str(r['정당'])
-            if '민주' in p: m[c] = C_MINJU
-            elif '국민' in p or '국힘' in p: m[c] = C_GUKHIM
-            else: m[c] = C_OTHER
-    return m
-
 def get_hex(col, row, r=1):
     cx, cy = col*math.sqrt(3)*r + (row%2==1)*(math.sqrt(3)/2)*r, row*1.5*r
     x, y = [], []
@@ -96,7 +85,7 @@ with st.sidebar:
     mode = st.radio("메뉴", ["현행 판세", "시군구 판세", "대선 비교"])
     if st.button("🔄 실시간 새로고침"): st.cache_data.clear(); st.rerun()
 
-st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 솔루션 (Live)</h1></div>", unsafe_allow_html=True)
+st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 (Live)</h1></div>", unsafe_allow_html=True)
 
 if mode == "시군구 판세":
     act = d_lat[d_lat['기초지역']!='전체']['지역'].unique()
@@ -106,49 +95,56 @@ if mode == "시군구 판세":
         if c[i%6].button(f"{p}{r}", key=f"m{r}", use_container_width=True, type="primary" if sel==r else "secondary"):
             st.session_state.sel_reg = r; st.rerun()
     
-    st.plotly_chart(draw_map(None, f"🔍 {sel} 시군구 판세 분석", mode="status", active=act, highlight=sel), use_container_width=True)
+    st.plotly_chart(draw_map(None, f"🔍 {sel} 시군구 상세 분석", mode="status", active=act, highlight=sel), use_container_width=True)
     
     sub = d_lat[d_lat['지역']==sel].copy()
     if not sub.empty:
-        # [V11.5 핵심] 지지율 0 제거 및 정렬/슬롯 설정
         sub = sub[sub['지지율'] > 0]
-        sub['후보'] = sub['후보'].astype(str)
         
-        # 범례 일관성: 정원오-이재명-오세훈-김문수 순서 강제
-        legend_order = ['정원오', '이재명', '오세훈', '김문수']
-        colors = get_colors(sub)
-        sorted_m = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
+        # [V11.6 핵심 해결책] Graph Objects를 사용한 수동 레이아웃 제어
+        fig = go.Figure()
         
-        fig = px.bar(sub, x='기초지역', y='지지율', color='후보', 
-                     text=sub['지지율'].apply(lambda x:f"{x:.1f}%"), 
-                     barmode='group', 
-                     color_discrete_map=colors, 
-                     category_orders={'후보': legend_order, '기초지역': sorted_m})
+        # 1. 시군구 리스트 (X축)
+        muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
         
-        # [V11.5 새로운 시각] 후보에 상관없이 정당별로 슬롯(offsetgroup) 강제 할당
-        # 민주당 계열은 'G1', 국민의힘 계열은 'G2'로 묶어 유령 공간 제거
-        for trace in fig.data:
-            cand_name = trace.name
-            party = sub[sub['후보']==cand_name]['정당'].iloc[0]
-            if '민주' in str(party):
-                trace.offsetgroup = 'Minju'
-            elif '국민' in str(party) or '국힘' in str(trace.name):
-                trace.offsetgroup = 'Gukhim'
-        
-        # 막대 굵기 시원하게 키우기 (bargap 줄임)
+        # 2. 후보자별로 막대 추가
+        # 민주당 계열은 offset -0.4, 국민의힘 계열은 offset 0.0 부여 (두께 0.4)
+        for cand in sub['후보'].unique():
+            cand_df = sub[sub['후보'] == cand]
+            party = str(cand_df['정당'].iloc[0])
+            
+            # 정당별 색상 및 위치 결정
+            if '민주' in party:
+                color = C_MINJU; pos_offset = -0.4
+            elif '국민' in party or '국힘' in party:
+                color = C_GUKHIM; pos_offset = 0.0
+            else:
+                color = C_OTHER; pos_offset = 0.4
+                
+            fig.add_trace(go.Bar(
+                name=cand,
+                x=cand_df['기초지역'],
+                y=cand_df['지지율'],
+                text=cand_df['지지율'].apply(lambda x: f"{x:.1f}%"),
+                textposition='outside',
+                marker_color=color,
+                offset=pos_offset,  # 물리적 위치 강제 고정
+                width=0.4,          # 막대 두께 강제 고정
+            ))
+
+        # 3. 레이아웃 최적화
         fig.update_layout(
-            bargap=0.1, 
-            bargroupgap=0.0,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, title=None)
+            barmode='overlay', # group이 아닌 overlay로 설정하여 offset으로 위치 제어
+            xaxis=dict(title=None, categoryorder='array', categoryarray=muni_list),
+            yaxis=dict(title="지지율 (%)", range=[0, 100]),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=20, r=20, t=80, b=20),
+            plot_bgcolor='white',
+            bargap=0.1
         )
         st.plotly_chart(fig, use_container_width=True)
-        
-        st.write("### 📋 상세 데이터")
-        sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
-        st.dataframe(sub.sort_values(['m_key', '기초지역'])[['기초지역', '후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
 elif mode == "현행 판세":
-    # (기존 광역 판세 로직 유지하되 bargap 최적화 적용)
     d_prov = d_lat[d_lat['기초지역']=='전체']
     st.plotly_chart(draw_map(d_prov, "전국 광역 지지율 현황", highlight=sel), use_container_width=True)
 
