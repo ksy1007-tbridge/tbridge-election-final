@@ -5,9 +5,7 @@ import plotly.express as px
 import math
 from streamlit_gsheets import GSheetsConnection
 
-# ==========================================
-# 1. 페이지 설정 및 브랜딩 색상 정의
-# ==========================================
+# 1. 페이지 설정 및 브랜딩
 st.set_page_config(page_title="T-Bridge Election Dashboard", page_icon="🌉", layout="wide")
 
 COLOR_MINJU, COLOR_GUKHIM, COLOR_OTHER = "#004EA2", "#E61E2B", "#808080"
@@ -54,9 +52,9 @@ def get_hexagon_path(col, row, radius=1):
     cx, cy = col * math.sqrt(3) * radius + (row % 2 == 1) * (math.sqrt(3)/2) * radius, row * 1.5 * radius
     x_pts, y_pts = [], []
     for i in range(6):
-        angle_rad = math.pi / 6 + i * math.pi / 3
-        x_pts.append(cx + radius * math.cos(angle_rad))
-        y_pts.append(cy + radius * math.sin(angle_rad))
+        a = math.pi/6 + i*math.pi/3
+        x_pts.append(cx + radius*math.cos(a))
+        y_pts.append(cy + radius*math.sin(a))
     return cx, cy, x_pts + [x_pts[0]], y_pts + [y_pts[0]]
 
 def final_visual_map_engine(df, title_text, highlight_region="", mode="normal", active_regions=None):
@@ -104,7 +102,7 @@ def load_data():
 
 df_all, df_latest = load_data()
 
-# 4. 사이드바 및 레이아웃
+# 4. 사이드바 및 메인 프레임
 with st.sidebar:
     st.markdown(f"<h2 style='text-align: center; color: {BRAND_INDIGO};'>T-Bridge</h2>", unsafe_allow_html=True)
     app_mode = st.radio("📊 보기 모드 선택", ["현행 판세 분석", "시군구 판세 분석", "2025 대선 비교 분석", "🎛️ 가상 시나리오 시뮬레이터"])
@@ -126,14 +124,12 @@ if app_mode == "현행 판세 분석":
     st.plotly_chart(final_visual_map_engine(df_prov, "전국 광역 지지율 현황", highlight_region=sel_reg), use_container_width=True)
     st.divider(); st.markdown(f"### 🚩 {sel_reg} 광역 상세 분석")
     reg_hist = df_all[(df_all['지역'] == sel_reg) & (df_all['기초지역'] == '전체')].sort_values('조사일자')
-    
-    # 가독성을 위해 지지율 있는 후보만 선별
     reg_hist = reg_hist[reg_hist['지지율'] > 0]
-    d_colors, f_order = get_dynamic_color_map(reg_hist), get_sorted_candidate_order(reg_hist)
-    
+    reg_hist['후보'] = reg_hist['후보'].astype(str) # 카테고리 제거
+    d_colors = get_dynamic_color_map(reg_hist)
+    f_order = get_sorted_candidate_order(reg_hist)
     if len(reg_hist['조사일자'].unique()) > 1:
         st.plotly_chart(px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, title=f"[{sel_reg}] 지지율 추세", color_discrete_map=d_colors, category_orders={'후보': f_order}), use_container_width=True)
-    
     reg_latest = df_prov[df_prov['지역'] == sel_reg].copy()
     reg_latest = reg_latest[reg_latest['지지율'] > 0]
     if not reg_latest.empty:
@@ -143,7 +139,7 @@ if app_mode == "현행 판세 분석":
         reg_latest['sort_key'] = reg_latest['정당'].apply(lambda x: 1 if '민주' in str(x) else (2 if '국민' in str(x) or '국힘' in str(x) else 99))
         st.dataframe(reg_latest.sort_values('sort_key')[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
-# [모드 2] 시군구 판세 분석 (간격 최적화)
+# [모드 2] 시군구 판세 분석
 elif app_mode == "시군구 판세 분석":
     active_regs = df_latest[df_latest['기초지역'] != '전체']['지역'].unique()
     cols = st.columns(6)
@@ -152,14 +148,21 @@ elif app_mode == "시군구 판세 분석":
         if cols[i%6].button(f"{p}{reg}", key=f"m_{reg}", use_container_width=True, type="primary" if sel_reg == reg else "secondary"):
             st.session_state['selected_region'] = reg; st.rerun()
     st.plotly_chart(final_visual_map_engine(None, f"🔍 {sel_reg} 시군구 분석", mode="status", active_regions=active_regs, highlight_region=sel_reg), use_container_width=True)
-    
-    # 데이터 필터링
     sub_df = df_latest[df_latest['지역'] == sel_reg].copy()
     if not sub_df.empty:
-        # [V10.2 핵심] 지지율이 0보다 큰 후보만 남겨서 유령 슬롯 원천 제거
+        # [V10.3 결정적 한 줄] 지지율 0인 데이터 완전 삭제 및 카테고리 초기화
         sub_df = sub_df[sub_df['지지율'] > 0]
-        # 후보 이름을 문자열로 강제 변환하여 카테고리 속성 초기화
         sub_df['후보'] = sub_df['후보'].astype(str)
         
         d_colors = get_dynamic_color_map(sub_df)
-        f_order = get_sorted_candidate_
+        f_order = get_sorted_candidate_order(sub_df)
+        sorted_muni = ['전체'] + sorted([m for m in sub_df['기초지역'].unique() if m != '전체'])
+        
+        fig_sub = px.bar(sub_df, x='기초지역', y='지지율', color='후보', text=sub_df['지지율'].apply(lambda x: f"{x:.1f}%"), barmode='group', color_discrete_map=d_colors, category_orders={'후보': f_order, '기초지역': sorted_muni})
+        # bargap을 줄여 막대를 굵게, bargroupgap을 0으로 만들어 막대 밀착
+        fig_sub.update_layout(bargap=0.15, bargroupgap=0.0) 
+        st.plotly_chart(fig_sub, use_container_width=True)
+        st.write("### 📋 상세 데이터 (전체 포함)")
+        sub_df['m_key'] = sub_df['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
+        sub_df['p_key'] = sub_df['정당'].apply(lambda x: 1 if '민주' in str(x) else (2 if '국민' in str(x) or '국힘' in str(x) else 99))
+        st.dataframe(sub_df.sort_values
