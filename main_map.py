@@ -6,7 +6,7 @@ import math
 from streamlit_gsheets import GSheetsConnection
 
 # 1. 설정 및 스타일
-st.set_page_config(page_title="T-Bridge", page_icon="🌉", layout="wide")
+st.set_page_config(page_title="T-Bridge Dashboard", page_icon="🌉", layout="wide")
 C_MINJU, C_GUKHIM, C_OTHER = "#004EA2", "#E61E2B", "#808080"
 B_INDIGO, S_FILL, S_LINE = "#1A237E", "#E3F2FD", "#1565C0"
 
@@ -40,11 +40,11 @@ def get_order(df):
 
 def get_hex(col, row, r=1):
     cx, cy = col*math.sqrt(3)*r + (row%2==1)*(math.sqrt(3)/2)*r, row*1.5*r
-    x, y = [], []
+    x_pts, y_pts = [], []
     for i in range(6):
         a = math.pi/6 + i*math.pi/3
-        x.append(cx + r*math.cos(a)); y.append(cy + r*math.sin(a))
-    return cx, cy, x+[x[0]], y+[y[0]]
+        x_pts.append(cx + r*math.cos(a)); y_pts.append(cy + r*math.sin(a))
+    return cx, cy, x_pts+[x_pts[0]], y_pts+[y_pts[0]]
 
 def draw_map(df, title, highlight="", mode="normal", active=[]):
     fig = go.Figure()
@@ -65,7 +65,6 @@ def draw_map(df, title, highlight="", mode="normal", active=[]):
     fig.update_layout(title=dict(text=f"<b>{title}</b>", x=0.5), xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x"), height=520, showlegend=False, margin=dict(l=0,r=0,t=60,b=0), plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
-# 3. 데이터 로드
 @st.cache_data(ttl=60)
 def load_data():
     try:
@@ -84,7 +83,6 @@ def load_data():
 
 d_all, d_lat = load_data()
 
-# 4. 사이드바 및 메인
 with st.sidebar:
     st.markdown(f"## T-Bridge")
     mode = st.radio("메뉴", ["현행 판세", "시군구 판세", "대선 비교"])
@@ -103,10 +101,12 @@ if mode == "현행 판세":
     st.plotly_chart(draw_map(d_prov, "전국 광역 현황", highlight=sel), use_container_width=True)
     st.divider()
     reg_lat = d_prov[d_prov['지역']==sel].copy()
-    reg_lat = reg_lat[reg_lat['지지율']>0] # 유령 제거
+    reg_lat = reg_lat[reg_lat['지지율']>0]
     if not reg_lat.empty:
+        # [V10.6] 변수명 통일 및 유령 제거
+        reg_lat['후보'] = reg_lat['후보'].astype(str)
         colors, order = get_colors(reg_lat), get_order(reg_lat)
-        fig = px.bar(reg_latest, x='후보', y='지지율', color='후보', text=reg_latest['지지율'].apply(lambda x:f"{x:.1f}%"), color_discrete_map=colors, category_orders={'후보':order})
+        fig = px.bar(reg_lat, x='후보', y='지지율', color='후보', text=reg_lat['지지율'].apply(lambda x:f"{x:.1f}%"), color_discrete_map=colors, category_orders={'후보':order})
         fig.update_layout(bargap=0.2, bargroupgap=0.0); st.plotly_chart(fig, use_container_width=True)
 
 elif mode == "시군구 판세":
@@ -119,13 +119,17 @@ elif mode == "시군구 판세":
     st.plotly_chart(draw_map(None, f"{sel} 시군구", mode="status", active=act, highlight=sel), use_container_width=True)
     sub = d_lat[d_lat['지역']==sel].copy()
     if not sub.empty:
-        # [V10.5 핵심] 지지율 0인 후보 완전 제거 + 카테고리 초기화
+        # [V10.6 핵심] 지지율 0인 후보 제거 + 카테고리 초기화
         sub = sub[sub['지지율'] > 0]
         sub['후보'] = sub['후보'].astype(str)
         colors, order = get_colors(sub), get_order(sub)
         sorted_m = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
         fig = px.bar(sub, x='기초지역', y='지지율', color='후보', text=sub['지지율'].apply(lambda x:f"{x:.1f}%"), barmode='group', color_discrete_map=colors, category_orders={'후보':order, '기초지역':sorted_m})
         fig.update_layout(bargap=0.15, bargroupgap=0.0); st.plotly_chart(fig, use_container_width=True)
+        # 하단 상세 표
+        sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
+        sub['p_key'] = sub['정당'].apply(lambda x: 1 if '민주' in str(x) else (2 if '국민' in str(x) or '국힘' in str(x) else 99))
+        st.dataframe(sub.sort_values(['m_key', '기초지역', 'p_key'])[['기초지역', '후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
 elif mode == "대선 비교":
     p_list = [['서울','이재명','민주당',52],['서울','김문수','국힘',45],['경기','이재명','민주당',54],['경기','김문수','국힘',43]]
