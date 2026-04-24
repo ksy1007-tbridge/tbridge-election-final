@@ -42,8 +42,10 @@ def get_hex(col, row, r=1):
     x_pts, y_pts = [], []
     for i in range(6):
         a = math.pi/6 + i*math.pi/3
-        x_pts.append(cx + r*math.cos(a)); y_pts.append(cy + r*math.sin(a))
-    return cx, cy, x+[x[0]], y+[y[0]]
+        x_pts.append(cx + r*math.cos(a))
+        y_pts.append(cy + r*math.sin(a))
+    # [V12.5 고정] 변수명 오타 수정: x -> x_pts, y -> y_pts
+    return cx, cy, x_pts + [x_pts[0]], y_pts + [y_pts[0]]
 
 def draw_map(df, title, highlight="", mode="normal", active=[]):
     fig = go.Figure()
@@ -92,11 +94,10 @@ with st.sidebar:
 
 st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 솔루션 (Live)</h1></div>", unsafe_allow_html=True)
 
-# 5. [중요] 공통 지역 선택 내비게이션 (상단 배치)
+# 5. 공통 지역 선택 내비게이션 (V12.5 유지)
 if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
 sel = st.session_state.sel_reg
 
-# 시군구 데이터가 있는 지역에 파란 점 표시를 위한 리스트
 act_regs = d_lat[d_lat['기초지역']!='전체']['지역'].unique()
 
 st.write("### 📍 지역 선택")
@@ -110,20 +111,18 @@ for i, r in enumerate(all_regs):
 
 st.divider()
 
-# 6. 모드별 콘텐츠 출력
+# 6. 모드별 콘텐츠
 if mode == "현행 판세":
     d_prov = d_lat[d_lat['기초지역']=='전체']
     st.plotly_chart(draw_map(d_prov, f"전국 광역 지지율 현황 (선택: {sel})", highlight=sel), use_container_width=True)
-    
     st.divider()
-    # 추세 그래프 (상위 2인 기준)
+    
     reg_hist = d_all[(d_all['지역'] == sel) & (d_all['기초지역'] == '전체')].sort_values('조사일자')
     if not reg_hist.empty:
         st.write(f"### 📈 {sel} 지지율 추세")
         fig_line = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=get_colors(reg_hist))
         st.plotly_chart(fig_line, use_container_width=True)
 
-    # 현황 막대 (상위 2인)
     reg_lat = d_prov[d_prov['지역']==sel].copy()
     reg_lat = reg_lat[reg_lat['지지율'] > 0].sort_values('지지율', ascending=False).head(2)
     if not reg_lat.empty:
@@ -144,7 +143,6 @@ elif mode == "시군구 판세":
     
     sub = d_lat[d_lat['지역']==sel].copy()
     if not sub.empty:
-        # 상위 2명 로직 적용 (유령 슬롯 제거)
         sub = sub[sub['지지율'] > 0]
         sub = sub.sort_values(['기초지역', '지지율'], ascending=[True, False]).groupby('기초지역').head(2).reset_index(drop=True)
         
@@ -166,7 +164,6 @@ elif mode == "시군구 판세":
         st.dataframe(table_df, hide_index=True, use_container_width=True)
 
 elif mode == "대선 비교":
-    # 2025 대선 실제 데이터
     p_list = [['서울특별시','이재명','더불어민주당',47.13],['서울특별시','김문수','국민의힘',41.55],['인천광역시','이재명','더불어민주당',51.67],['인천광역시','김문수','국민의힘',38.44],['경기도','이재명','더불어민주당',52.20],['경기도','김문수','국민의힘',37.95],['강원특별자치도','이재명','더불어민주당',43.95],['강원특별자치도','김문수','국민의힘',47.30],['대전광역시','이재명','더불어민주당',48.50],['대전광역시','김문수','국민의힘',40.58],['세종특별자치시','이재명','더불어민주당',55.62],['세종특별자치시','김문수','국민의힘',33.21],['충청북도','이재명','더불어민주당',47.47],['충청북도','김문수','국민의힘',43.22],['충청남도','이재명','더불어민주당',47.68],['충청남도','김문수','국민의힘',43.26],['광주광역시','이재명','더불어민주당',84.77],['광주광역시','김문수','국민의힘',8.02],['전북특별자치도','이재명','더불어민주당',82.65],['전북특별자치도','김문수','국민의힘',10.90],['전라남도','이재명','더불어민주당',85.87],['전라남도','김문수','국민의힘',8.54],['대구광역시','이재명','더불어민주당',23.22],['대구광역시','김문수','국민의힘',67.62],['경상북도','이재명','더불어민주당',25.52],['경상북도','김문수','국민의힘',66.87],['부산광역시','이재명','더불어민주당',40.14],['부산광역시','김문수','국민의힘',51.39],['울산광역시','이재명','더불어민주당',42.54],['울산광역시','김문수','국민의힘',47.57],['경상남도','이재명','더불어민주당',39.40],['경상남도','김문수','국민의힘',51.99],['제주특별자치도','이재명','더불어민주당',54.76],['제주특별자치도','김문수','국민의힘',34.78]]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
     c1, c2 = st.columns(2)
