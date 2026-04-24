@@ -10,7 +10,7 @@ st.set_page_config(page_title="T-Bridge Dashboard", page_icon="🌉", layout="wi
 C_MINJU, C_GUKHIM, C_OTHER = "#004EA2", "#E61E2B", "#808080"
 B_INDIGO, S_FILL, S_LINE = "#1A237E", "#E3F2FD", "#1565C0"
 
-# CSS: 버튼 색상 고정 및 스타일
+# CSS: 버튼 및 스타일 강제 고정
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -25,6 +25,7 @@ st.markdown(f"""
 HEX_MAP = {'경기':(1,6),'강원':(2,6),'인천':(0,5),'서울':(1,5),'충북':(2,5),'대전':(1,4),'세종':(2,4),'경북':(3,4),'전북':(0,3),'충남':(1,3),'대구':(2,3),'울산':(3,3),'전남':(0,2),'광주':(1,2),'경남':(2,2),'부산':(3,2),'제주':(0,1)}
 NAME_MAP = {'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','세종시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주','제주도':'제주'}
 
+# 도움 함수들
 def get_party_pri(p):
     p = str(p)
     return 1 if '민주' in p else (2 if '국민' in p or '국힘' in p else 99)
@@ -46,11 +47,9 @@ def get_hex(col, row, r=1):
 
 def draw_map(df, title, highlight="", mode="normal", active=[]):
     fig = go.Figure()
-    # 지역 명칭 정규화 (전북특별자치도 -> 전북 등)
     if df is not None:
         df = df.copy()
         df['지역'] = df['지역'].replace(NAME_MAP)
-        
     for reg, (col, row) in HEX_MAP.items():
         cx, cy, x_pts, y_pts = get_hex(col, row)
         fc, tc, lc, lw = '#F8F9FA', B_INDIGO, "#DEE2E6", 1.2
@@ -85,7 +84,7 @@ def load_data():
 
 d_all, d_lat = load_data()
 
-# 사이드바 및 메인 로직
+# 3. 메인 로직
 if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
 sel = st.session_state.sel_reg
 
@@ -96,6 +95,7 @@ with st.sidebar:
 
 st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 솔루션 (Live)</h1></div>", unsafe_allow_html=True)
 
+# --- [모드 1] 현행 판세 ---
 if mode == "현행 판세":
     d_prov = d_lat[d_lat['기초지역']=='전체']
     c = st.columns(6); all_regs = sorted(HEX_MAP.keys())
@@ -103,8 +103,28 @@ if mode == "현행 판세":
         if c[i%6].button(r, key=f"p{r}", use_container_width=True, type="primary" if sel==r else "secondary"):
             st.session_state.sel_reg = r; st.rerun()
     st.plotly_chart(draw_map(d_prov, "전국 광역 지지율 현황", highlight=sel), use_container_width=True)
-    # (이후 광역 추세/막대 그래프 로직 생략 - V11.9와 동일)
+    st.divider()
+    reg_hist = d_all[(d_all['지역'] == sel) & (d_all['기초지역'] == '전체')].sort_values('조사일자')
+    if not reg_hist.empty and len(reg_hist['조사일자'].unique()) > 1:
+        st.write(f"### 📈 {sel} 지지율 추세")
+        fig_line = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=get_colors(reg_hist))
+        st.plotly_chart(fig_line, use_container_width=True)
+    reg_lat = d_prov[d_prov['지역']==sel].copy()
+    reg_lat = reg_lat[reg_lat['지지율'] > 0]
+    if not reg_lat.empty:
+        st.write(f"### 📊 {sel} 최신 지지율 현황")
+        fig_bar = go.Figure()
+        reg_lat['p_pri'] = reg_lat['정당'].apply(get_party_pri)
+        for cand in reg_lat.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique():
+            df_c = reg_lat[reg_lat['후보'] == cand]
+            party = str(df_c['정당'].iloc[0])
+            color = C_MINJU if '민주' in party else (C_GUKHIM if '국민' in party or '국힘' in party else C_OTHER)
+            offset = -0.35 if '민주' in party else 0.0
+            fig_bar.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=color, offset=offset, width=0.35))
+        fig_bar.update_layout(barmode='overlay', yaxis=dict(range=[0, 100]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
+        st.plotly_chart(fig_bar, use_container_width=True)
 
+# --- [모드 2] 시군구 판세 (로직 복구 완료) ---
 elif mode == "시군구 판세":
     act = d_lat[d_lat['기초지역']!='전체']['지역'].unique()
     c = st.columns(6); all_regs = sorted(HEX_MAP.keys())
@@ -113,10 +133,31 @@ elif mode == "시군구 판세":
         if c[i%6].button(f"{p}{r}", key=f"m{r}", use_container_width=True, type="primary" if sel==r else "secondary"):
             st.session_state.sel_reg = r; st.rerun()
     st.plotly_chart(draw_map(None, f"🔍 {sel} 시군구 상세 분석", mode="status", active=act, highlight=sel), use_container_width=True)
-    # (이후 시군구 밀착 막대/표 로직 생략 - V11.9와 동일)
+    
+    sub = d_lat[d_lat['지역']==sel].copy()
+    if not sub.empty:
+        sub = sub[sub['지지율'] > 0]
+        # 1. 시군구 밀착 막대 그래프
+        fig = go.Figure()
+        muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
+        sub['p_pri'] = sub['정당'].apply(get_party_pri)
+        for cand in sub.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique():
+            df_c = sub[sub['후보'] == cand]
+            party = str(df_c['정당'].iloc[0])
+            color = C_MINJU if '민주' in party else (C_GUKHIM if '국민' in party or '국힘' in party else C_OTHER)
+            offset = -0.35 if '민주' in party else 0.0
+            fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=color, offset=offset, width=0.35))
+        fig.update_layout(barmode='overlay', xaxis=dict(categoryorder='array', categoryarray=muni_list), yaxis=dict(range=[0, 100]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # 2. 상세 데이터 표 (전체 상단 고정)
+        st.write("### 📋 상세 데이터 현황")
+        sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
+        table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])[['기초지역', '후보', '정당', '지지율']]
+        st.dataframe(table_df, hide_index=True, use_container_width=True)
 
+# --- [모드 3] 대선 비교 (실제 데이터 유지) ---
 elif mode == "대선 비교":
-    # 제공해주신 2025 대선 실제 데이터 (17개 시도 전체 반영)
     p_list = [
         ['서울특별시','이재명','더불어민주당',47.13], ['서울특별시','김문수','국민의힘',41.55],
         ['인천광역시','이재명','더불어민주당',51.67], ['인천광역시','김문수','국민의힘',38.44],
@@ -137,7 +178,6 @@ elif mode == "대선 비교":
         ['제주특별자치도','이재명','더불어민주당',54.76], ['제주특별자치도','김문수','국민의힘',34.78]
     ]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
-    
     c1, c2 = st.columns(2)
     with c1: st.plotly_chart(draw_map(d_25, "🗳️ 2025 대선 결과 (확정)"), use_container_width=True)
     with c2: st.plotly_chart(draw_map(d_lat[d_lat['기초지역']=='전체'], "📈 현재 실시간 판세 (Live)"), use_container_width=True)
