@@ -10,7 +10,7 @@ st.set_page_config(page_title="T-Bridge Dashboard", page_icon="🌉", layout="wi
 C_MINJU, C_GUKHIM, C_OTHER = "#004EA2", "#E61E2B", "#808080"
 B_INDIGO, S_FILL, S_LINE = "#1A237E", "#E3F2FD", "#1565C0"
 
-# CSS: 버튼 및 스타일 강제 고정
+# CSS: 스타일 강제 고정
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -39,10 +39,10 @@ def get_colors(df):
 
 def get_hex(col, row, r=1):
     cx, cy = col*math.sqrt(3)*r + (row%2==1)*(math.sqrt(3)/2)*r, row*1.5*r
-    x, y = [], []
+    x_pts, y_pts = [], []
     for i in range(6):
         a = math.pi/6 + i*math.pi/3
-        x.append(cx + r*math.cos(a)); y.append(cy + r*math.sin(a))
+        x_pts.append(cx + r*math.cos(a)); y_pts.append(cy + r*math.sin(a))
     return cx, cy, x+[x[0]], y+[y[0]]
 
 def draw_map(df, title, highlight="", mode="normal", active=[]):
@@ -84,38 +84,50 @@ def load_data():
 
 d_all, d_lat = load_data()
 
-# 3. 메인 로직
-if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
-sel = st.session_state.sel_reg
-
+# 4. 사이드바 메뉴
 with st.sidebar:
     st.markdown("## T-Bridge")
-    mode = st.radio("메뉴", ["현행 판세", "시군구 판세", "대선 비교"])
-    if st.button("🔄 실시간 새로고침"): st.cache_data.clear(); st.rerun()
+    mode = st.radio("📊 분석 메뉴", ["현행 판세", "시군구 판세", "대선 비교"])
+    if st.button("🔄 데이터 새로고침"): st.cache_data.clear(); st.rerun()
 
 st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 솔루션 (Live)</h1></div>", unsafe_allow_html=True)
 
-# --- [모드 1] 현행 판세 ---
+# 5. [중요] 공통 지역 선택 내비게이션 (상단 배치)
+if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
+sel = st.session_state.sel_reg
+
+# 시군구 데이터가 있는 지역에 파란 점 표시를 위한 리스트
+act_regs = d_lat[d_lat['기초지역']!='전체']['지역'].unique()
+
+st.write("### 📍 지역 선택")
+nav_cols = st.columns(6)
+all_regs = sorted(HEX_MAP.keys())
+for i, r in enumerate(all_regs):
+    prefix = "🔵 " if r in act_regs else ""
+    if nav_cols[i%6].button(f"{prefix}{r}", key=f"nav_{r}", use_container_width=True, type="primary" if sel == r else "secondary"):
+        st.session_state.sel_reg = r
+        st.rerun()
+
+st.divider()
+
+# 6. 모드별 콘텐츠 출력
 if mode == "현행 판세":
     d_prov = d_lat[d_lat['기초지역']=='전체']
-    c = st.columns(6); all_regs = sorted(HEX_MAP.keys())
-    for i, r in enumerate(all_regs):
-        if c[i%6].button(r, key=f"p{r}", use_container_width=True, type="primary" if sel==r else "secondary"):
-            st.session_state.sel_reg = r; st.rerun()
-    st.plotly_chart(draw_map(d_prov, "전국 광역 지지율 현황", highlight=sel), use_container_width=True)
+    st.plotly_chart(draw_map(d_prov, f"전국 광역 지지율 현황 (선택: {sel})", highlight=sel), use_container_width=True)
+    
     st.divider()
+    # 추세 그래프 (상위 2인 기준)
     reg_hist = d_all[(d_all['지역'] == sel) & (d_all['기초지역'] == '전체')].sort_values('조사일자')
-    if not reg_hist.empty and len(reg_hist['조사일자'].unique()) > 1:
+    if not reg_hist.empty:
         st.write(f"### 📈 {sel} 지지율 추세")
         fig_line = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=get_colors(reg_hist))
         st.plotly_chart(fig_line, use_container_width=True)
-    
-    # 상위 2명 필터 로직 적용
+
+    # 현황 막대 (상위 2인)
     reg_lat = d_prov[d_prov['지역']==sel].copy()
     reg_lat = reg_lat[reg_lat['지지율'] > 0].sort_values('지지율', ascending=False).head(2)
-    
     if not reg_lat.empty:
-        st.write(f"### 📊 {sel} 최신 지지율 현황")
+        st.write(f"### 📊 {sel} 최신 지지율 현황 (Top 2)")
         fig_bar = go.Figure()
         reg_lat['p_pri'] = reg_lat['정당'].apply(get_party_pri)
         for cand in reg_lat.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique():
@@ -127,43 +139,34 @@ if mode == "현행 판세":
         fig_bar.update_layout(barmode='overlay', yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-# --- [모드 2] 시군구 판세 (울산 Top 2 최적화 완료) ---
 elif mode == "시군구 판세":
-    act = d_lat[d_lat['기초지역']!='전체']['지역'].unique()
-    c = st.columns(6); all_regs = sorted(HEX_MAP.keys())
-    for i, r in enumerate(all_regs):
-        p = "🔵 " if r in act else "⚪ "
-        if c[i%6].button(f"{p}{r}", key=f"m{r}", use_container_width=True, type="primary" if sel==r else "secondary"):
-            st.session_state.sel_reg = r; st.rerun()
-    st.plotly_chart(draw_map(None, f"🔍 {sel} 시군구 상세 분석", mode="status", active=act, highlight=sel), use_container_width=True)
+    st.plotly_chart(draw_map(None, f"🔍 {sel} 시군구 판세 상세 분석", mode="status", active=act_regs, highlight=sel), use_container_width=True)
     
     sub = d_lat[d_lat['지역']==sel].copy()
     if not sub.empty:
-        # [V12.3 핵심 로직] 기초지역별로 지지율 상위 2명만 남김 (울산 '전체'의 유령 슬롯 원천 박멸)
+        # 상위 2명 로직 적용 (유령 슬롯 제거)
         sub = sub[sub['지지율'] > 0]
         sub = sub.sort_values(['기초지역', '지지율'], ascending=[True, False]).groupby('기초지역').head(2).reset_index(drop=True)
         
         fig = go.Figure()
         muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
         sub['p_pri'] = sub['정당'].apply(get_party_pri)
-        
         for cand in sub.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique():
             df_c = sub[sub['후보'] == cand]
             party = str(df_c['정당'].iloc[0])
             color = C_MINJU if '민주' in party else (C_GUKHIM if '국민' in party or '국힘' in party else C_OTHER)
             offset = -0.35 if '민주' in party else 0.0
             fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=color, offset=offset, width=0.35))
-        
         fig.update_layout(barmode='overlay', xaxis=dict(categoryorder='array', categoryarray=muni_list), yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig, use_container_width=True)
         
-        st.write("### 📋 상세 데이터 현황 (상위 2인 기준)")
+        st.write("### 📋 상세 데이터 (상위 2인 기준)")
         sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
         table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])[['기초지역', '후보', '정당', '지지율']]
         st.dataframe(table_df, hide_index=True, use_container_width=True)
 
-# --- [모드 3] 대선 비교 ---
 elif mode == "대선 비교":
+    # 2025 대선 실제 데이터
     p_list = [['서울특별시','이재명','더불어민주당',47.13],['서울특별시','김문수','국민의힘',41.55],['인천광역시','이재명','더불어민주당',51.67],['인천광역시','김문수','국민의힘',38.44],['경기도','이재명','더불어민주당',52.20],['경기도','김문수','국민의힘',37.95],['강원특별자치도','이재명','더불어민주당',43.95],['강원특별자치도','김문수','국민의힘',47.30],['대전광역시','이재명','더불어민주당',48.50],['대전광역시','김문수','국민의힘',40.58],['세종특별자치시','이재명','더불어민주당',55.62],['세종특별자치시','김문수','국민의힘',33.21],['충청북도','이재명','더불어민주당',47.47],['충청북도','김문수','국민의힘',43.22],['충청남도','이재명','더불어민주당',47.68],['충청남도','김문수','국민의힘',43.26],['광주광역시','이재명','더불어민주당',84.77],['광주광역시','김문수','국민의힘',8.02],['전북특별자치도','이재명','더불어민주당',82.65],['전북특별자치도','김문수','국민의힘',10.90],['전라남도','이재명','더불어민주당',85.87],['전라남도','김문수','국민의힘',8.54],['대구광역시','이재명','더불어민주당',23.22],['대구광역시','김문수','국민의힘',67.62],['경상북도','이재명','더불어민주당',25.52],['경상북도','김문수','국민의힘',66.87],['부산광역시','이재명','더불어민주당',40.14],['부산광역시','김문수','국민의힘',51.39],['울산광역시','이재명','더불어민주당',42.54],['울산광역시','김문수','국민의힘',47.57],['경상남도','이재명','더불어민주당',39.40],['경상남도','김문수','국민의힘',51.99],['제주특별자치도','이재명','더불어민주당',54.76],['제주특별자치도','김문수','국민의힘',34.78]]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
     c1, c2 = st.columns(2)
