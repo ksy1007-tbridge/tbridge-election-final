@@ -43,11 +43,11 @@ def get_colors(df):
 
 def get_hex(col, row, r=1):
     cx, cy = col*math.sqrt(3)*r + (row%2==1)*(math.sqrt(3)/2)*r, row*1.5*r
-    x, y = [], []
+    x_pts, y_pts = [], []
     for i in range(6):
         a = math.pi/6 + i*math.pi/3
-        x.append(cx + r*math.cos(a)); y.append(cy + r*math.sin(a))
-    return cx, cy, x+[x[0]], y+[y[0]]
+        x_pts.append(cx + r*math.cos(a)); y_pts.append(cy + r*math.sin(a))
+    return cx, cy, x_pts+[x_pts[0]], y_pts+[y_pts[0]]
 
 def draw_map(df, title, highlight="", mode="normal", active=[]):
     fig = go.Figure()
@@ -96,55 +96,36 @@ with st.sidebar:
 
 st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 (Live)</h1></div>", unsafe_allow_html=True)
 
-# [현행 판세] 모드 - 추세/현황 그래프 복구
+# [현행 판세]
 if mode == "현행 판세":
     d_prov = d_lat[d_lat['기초지역']=='전체']
     c = st.columns(6); all_regs = sorted(HEX_MAP.keys())
     for i, r in enumerate(all_regs):
         if c[i%6].button(r, key=f"p{r}", use_container_width=True, type="primary" if sel==r else "secondary"):
             st.session_state.sel_reg = r; st.rerun()
-    
     st.plotly_chart(draw_map(d_prov, "전국 광역 지지율 현황", highlight=sel), use_container_width=True)
     st.divider()
-
-    # 1. 지지율 추세 그래프 (Line Chart)
     reg_hist = d_all[(d_all['지역'] == sel) & (d_all['기초지역'] == '전체')].sort_values('조사일자')
     if not reg_hist.empty and len(reg_hist['조사일자'].unique()) > 1:
         st.write(f"### 📈 {sel} 지지율 추세")
-        h_colors = get_colors(reg_hist)
-        fig_line = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=h_colors)
+        fig_line = px.line(reg_hist, x='조사일자', y='지지율', color='후보', markers=True, color_discrete_map=get_colors(reg_hist))
         st.plotly_chart(fig_line, use_container_width=True)
-
-    # 2. 최신 지지율 현황 (Bar Chart - go.Bar 엔진)
     reg_lat = d_prov[d_prov['지역']==sel].copy()
     reg_lat = reg_lat[reg_lat['지지율'] > 0]
     if not reg_lat.empty:
         st.write(f"### 📊 {sel} 최신 지지율 현황")
         fig_bar = go.Figure()
         reg_lat['p_pri'] = reg_lat['정당'].apply(get_party_pri)
-        sorted_cands = reg_lat.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique()
-
-        for cand in sorted_cands:
-            cand_df = reg_lat[reg_lat['후보'] == cand]
-            party = str(cand_df['정당'].iloc[0])
+        for cand in reg_lat.sort_values(['p_pri', '지지율'], ascending=[True, False])['후보'].unique():
+            df_c = reg_lat[reg_lat['후보'] == cand]
+            party = str(df_c['정당'].iloc[0])
             color = C_MINJU if '민주' in party else (C_GUKHIM if '국민' in party or '국힘' in party else C_OTHER)
             offset = -0.35 if '민주' in party else 0.0
-            
-            fig_bar.add_trace(go.Bar(
-                name=cand, x=cand_df['기초지역'], y=cand_df['지지율'],
-                text=cand_df['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside',
-                marker_color=color, offset=offset, width=0.35
-            ))
-        fig_bar.update_layout(barmode='overlay', xaxis=dict(title=None), yaxis=dict(range=[0, 100]), 
-                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
-                              margin=dict(l=20,r=20,t=80,b=20), plot_bgcolor='white', bargap=0.1)
+            fig_bar.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=color, offset=offset, width=0.35))
+        fig_bar.update_layout(barmode='overlay', yaxis=dict(range=[0, 100]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        # 3. 상세 데이터 표
-        st.write(f"### 📋 {sel} 상세 데이터")
-        st.dataframe(reg_lat.sort_values('p_pri')[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
-
-# [시군구 판세] 모드 - 어제 완성한 밀착 로직 유지
+# [시군구 판세]
 elif mode == "시군구 판세":
     act = d_lat[d_lat['기초지역']!='전체']['지역'].unique()
     c = st.columns(6); all_regs = sorted(HEX_MAP.keys())
@@ -167,9 +148,15 @@ elif mode == "시군구 판세":
             fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=color, offset=offset, width=0.35))
         fig.update_layout(barmode='overlay', xaxis=dict(categoryorder='array', categoryarray=muni_list), yaxis=dict(range=[0, 100]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(sub.sort_values(['기초지역', 'p_pri'])[['기초지역', '후보', '정당', '지지율']], hide_index=True, use_container_width=True)
+        
+        # [V11.9 핵심] 상세 데이터 표 '전체' 상단 고정 정렬
+        st.write("### 📋 상세 데이터 현황")
+        sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
+        # 정렬 순서: m_key(0 우선) -> 기초지역(가나다) -> 정당 우선순위
+        table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])[['기초지역', '후보', '정당', '지지율']]
+        st.dataframe(table_df, hide_index=True, use_container_width=True)
 
-# [대선 비교] 모드
+# [대선 비교]
 elif mode == "대선 비교":
     p_list = [['서울','이재명','민주당',52],['서울','김문수','국힘',45],['경기','이재명','민주당',54],['경기','김문수','국힘',43]]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
