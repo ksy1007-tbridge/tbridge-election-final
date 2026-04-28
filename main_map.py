@@ -85,7 +85,7 @@ def load_data():
 
 d_all, d_lat = load_data()
 
-# 4. 상단 내비게이션 및 공통 설정
+# 4. 상단 내비게이션 및 사이드바 설정
 if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
 sel = st.session_state.sel_reg
 
@@ -93,6 +93,9 @@ with st.sidebar:
     st.markdown("## T-Bridge")
     mode = st.radio("📊 분석 메뉴", ["현행 판세", "시군구 판세", "대선 비교"])
     if st.button("🔄 데이터 새로고침"): st.cache_data.clear(); st.rerun()
+    st.divider()
+    # [V12.7 주의 메시지 복구]
+    st.caption("인용된 조사와 관련한 자세한 사항은 중앙선거여론조사심의위원회 홈페이지를 참조해 주세요.")
 
 st.markdown("<div class='main-header'><h1>T-Bridge 판세 분석 솔루션 (Live)</h1></div>", unsafe_allow_html=True)
 
@@ -138,57 +141,37 @@ elif mode == "시군구 판세":
     
     sub = d_lat[d_lat['지역']==sel].copy()
     if not sub.empty:
-        # [데이터 준비] 지지율 0인 후보 제거 및 기본 정렬
         sub = sub[sub['지지율'] > 0]
         sub['p_pri'] = sub['정당'].apply(get_party_pri)
         sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
         
-        # [표 데이터] 모든 후보 노출 및 정렬 (전체 우선 -> 기초지역 가나다 -> 정당순)
+        # [표 데이터] 모든 후보 노출
         table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])[['기초지역', '후보', '정당', '지지율']]
-        
-        # [범례 순서 추출] 표에 등장하는 후보 순서대로 리스트 생성 (중복 제거)
+        # [범례 순서 동기화] 표 순서대로 후보 리스트 추출
         legend_candidates = table_df['후보'].unique().tolist()
-        
-        # [그래프 데이터] 상위 2인만 필터링 (디자인 무결성 유지)
+        # [그래프 데이터] 상위 2인 필터링
         graph_df = sub.sort_values(['기초지역', '지지율'], ascending=[True, False]).groupby('기초지역').head(2).reset_index(drop=True)
         
         fig = go.Figure()
         muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
         
-        # [V12.6 핵심] 범례(Legend) 순서를 표의 후보 등장 순서와 동기화하여 trace 추가
         for cand in legend_candidates:
             df_c = graph_df[graph_df['후보'] == cand]
-            if df_c.empty: continue # 상위 2위에 못 들어 지표가 없으면 패스
-            
+            if df_c.empty: continue
             party = str(df_c['정당'].iloc[0])
             color = C_MINJU if '민주' in party else (C_GUKHIM if '국민' in party or '국힘' in party else C_OTHER)
             offset = -0.35 if '민주' in party else 0.0
             
-            fig.add_trace(go.Bar(
-                name=cand, 
-                x=df_c['기초지역'], 
-                y=df_c['지지율'], 
-                text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), 
-                textposition='outside', 
-                marker_color=color, 
-                offset=offset, 
-                width=0.35
-            ))
+            fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=color, offset=offset, width=0.35))
             
-        fig.update_layout(
-            barmode='overlay', 
-            xaxis=dict(categoryorder='array', categoryarray=muni_list), 
-            yaxis=dict(range=[0, 105]), 
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
-            plot_bgcolor='white', 
-            bargap=0.1
-        )
+        fig.update_layout(barmode='overlay', xaxis=dict(categoryorder='array', categoryarray=muni_list), yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig, use_container_width=True)
         
         st.write("### 📋 상세 데이터 (전체 후보 노출)")
         st.dataframe(table_df, hide_index=True, use_container_width=True)
 
 elif mode == "대선 비교":
+    # 실제 2025 대선 데이터
     p_list = [['서울특별시','이재명','더불어민주당',47.13],['서울특별시','김문수','국민의힘',41.55],['인천광역시','이재명','더불어민주당',51.67],['인천광역시','김문수','국민의힘',38.44],['경기도','이재명','더불어민주당',52.20],['경기도','김문수','국민의힘',37.95],['강원특별자치도','이재명','더불어민주당',43.95],['강원특별자치도','김문수','국민의힘',47.30],['대전광역시','이재명','더불어민주당',48.50],['대전광역시','김문수','국민의힘',40.58],['세종특별자치시','이재명','더불어민주당',55.62],['세종특별자치시','김문수','국민의힘',33.21],['충청북도','이재명','더불어민주당',47.47],['충청북도','김문수','국민의힘',43.22],['충청남도','이재명','더불어민주당',47.68],['충청남도','김문수','국민의힘',43.26],['광주광역시','이재명','더불어민주당',84.77],['광주광역시','김문수','국민의힘',8.02],['전북특별자치도','이재명','더불어민주당',82.65],['전북특별자치도','김문수','국민의힘',10.90],['전라남도','이재명','더불어민주당',85.87],['전라남도','김문수','국민의힘',8.54],['대구광역시','이재명','더불어민주당',23.22],['대구광역시','김문수','국민의힘',67.62],['경상북도','이재명','더불어민주당',25.52],['경상북도','김문수','국민의힘',66.87],['부산광역시','이재명','더불어민주당',40.14],['부산광역시','김문수','국민의힘',51.39],['울산광역시','이재명','더불어민주당',42.54],['울산광역시','김문수','국민의힘',47.57],['경상남도','이재명','더불어민주당',39.40],['경상남도','김문수','국민의힘',51.99],['제주특별자치도','이재명','더불어민주당',54.76],['제주특별자치도','김문수','국민의힘',34.78]]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
     c1, c2 = st.columns(2)
