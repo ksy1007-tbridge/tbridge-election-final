@@ -10,7 +10,7 @@ st.set_page_config(page_title="T-Bridge Dashboard", page_icon="🌉", layout="wi
 C_MINJU, C_GUKHIM, C_JINBO, C_GONGHWA, C_OTHER = "#004EA2", "#E61E2B", "#D6001C", "#002B5B", "#808080"
 B_INDIGO, S_FILL, S_LINE = "#1A237E", "#E3F2FD", "#1565C0"
 
-# CSS: 스타일 및 버튼 색상 강제 고정
+# CSS: 스타일 및 버튼 색상 고정
 st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
@@ -25,7 +25,6 @@ st.markdown(f"""
 HEX_MAP = {'경기':(1,6),'강원':(2,6),'인천':(0,5),'서울':(1,5),'충북':(2,5),'대전':(1,4),'세종':(2,4),'경북':(3,4),'전북':(0,3),'충남':(1,3),'대구':(2,3),'울산':(3,3),'전남':(0,2),'광주':(1,2),'경남':(2,2),'부산':(3,2),'제주':(0,1)}
 NAME_MAP = {'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','세종시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주','제주도':'제주'}
 
-# 정당 우선순위 로직 (선거 기호 순)
 def get_party_pri(p):
     p = str(p)
     if '민주' in p: return 1
@@ -84,8 +83,15 @@ def load_data():
         df['기초지역'] = df['기초지역'].fillna('전체').astype(str).str.strip()
         df['지지율'] = pd.to_numeric(df['지지율'].astype(str).str.replace('%',''), errors='coerce').fillna(0)
         df['조사일자'] = pd.to_datetime(df['조사일자']).dt.date
+        
+        # d_avg: 날짜별 평균 데이터
         d_avg = df.groupby(['조사일자','지역','기초지역','후보','정당'], as_index=False)['지지율'].mean()
-        d_lat = d_avg.sort_values('조사일자').drop_duplicates(subset=['지역','기초지역','후보'], keep='last')
+        
+        # [V13.5 핵심 해결책] 각 지역/기초지역별로 "가장 최신 날짜"의 데이터만 추출
+        # 단순히 후보별 마지막 기록을 찾는 것이 아니라, 해당 구역의 마지막 조사 시점을 기준으로 함
+        latest_dates = d_avg.groupby(['지역', '기초지역'])['조사일자'].max().reset_index()
+        d_lat = pd.merge(d_avg, latest_dates, on=['지역', '기초지역', '조사일자'])
+        
         return d_avg, d_lat
     except: return None, None
 
@@ -113,7 +119,6 @@ for i, r in enumerate(sorted(HEX_MAP.keys())):
         st.session_state.sel_reg = r; st.rerun()
 st.divider()
 
-# 공통 오프셋 맵 (겹침 방지)
 offset_map = {1: -0.3, 2: -0.15, 3: 0.0, 4: 0.15, 5: 0.3}
 
 # 5. 모드별 콘텐츠
@@ -122,7 +127,7 @@ if mode == "현행 판세":
     st.plotly_chart(draw_map(d_prov, f"전국 광역 지지율 현황 (선택: {sel})", highlight=sel), use_container_width=True)
     st.divider()
     
-    # [V13.2 복구] 지지율 추세 그래프
+    # 지지율 추세 그래프
     reg_hist = d_all[(d_all['지역'] == sel) & (d_all['기초지역'] == '전체')].sort_values('조사일자')
     if not reg_hist.empty:
         st.write(f"### 📈 {sel} 지지율 추세")
@@ -130,19 +135,17 @@ if mode == "현행 판세":
                            color_discrete_map={c: get_cand_color(p) for c, p in zip(reg_hist['후보'], reg_hist['정당'])})
         st.plotly_chart(fig_line, use_container_width=True)
 
-    # [V13.2 복구] 최신 지지율 현황 막대 그래프 (겹침 방지 적용)
+    # 최신 지지율 현황 (Top 2 필터링)
     reg_lat = d_prov[d_prov['지역']==sel].copy()
     if not reg_lat.empty:
         reg_lat = reg_lat[reg_lat['지지율'] > 0]
-        reg_lat['p_pri'] = reg_lat['정당'].apply(get_party_pri)
-        
-        st.write(f"### 📊 {sel} 최신 지지율 현황")
-        fig_bar = go.Figure()
-        
-        # 디자인을 위해 상위 2인만 필터링하여 그래프 생성
+        # 해당 지역의 상위 2인만 추출
         graph_df = reg_lat.sort_values('지지율', ascending=False).head(2)
         
-        for cand in reg_lat.sort_values('p_pri')['후보'].unique():
+        st.write(f"### 📊 {sel} 최신 지지율 현황 (Top 2)")
+        fig_bar = go.Figure()
+        
+        for cand in reg_lat.sort_values('후보')['후보'].unique():
             df_c = graph_df[graph_df['후보'] == cand]
             if df_c.empty: continue
             
@@ -156,13 +159,10 @@ if mode == "현행 판세":
                 textposition='outside', marker_color=get_cand_color(party),
                 offset=offset, width=0.14
             ))
-        fig_bar.update_layout(barmode='overlay', yaxis=dict(range=[0, 105]), 
-                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), 
-                              plot_bgcolor='white', bargap=0.1)
+        fig_bar.update_layout(barmode='overlay', yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        # [V13.2 복구] 상세 데이터 표
-        st.write(f"### 📋 상세 데이터")
+        st.write(f"### 📋 상세 데이터 (최신 조사일: {reg_lat['조사일자'].max()})")
         st.dataframe(reg_lat.sort_values('p_pri')[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
 elif mode == "시군구 판세":
@@ -176,6 +176,7 @@ elif mode == "시군구 판세":
         full_table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])
         fig = go.Figure()
         muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
+        # 그래프는 여전히 상위 2인만 시각화
         graph_df = sub.sort_values(['기초지역', '지지율'], ascending=[True, False]).groupby('기초지역').head(2).reset_index(drop=True)
         
         for cand in full_table_df['후보'].unique():
@@ -187,6 +188,7 @@ elif mode == "시군구 판세":
             fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=get_cand_color(party), offset=offset, width=0.14))
         fig.update_layout(barmode='overlay', xaxis=dict(categoryorder='array', categoryarray=muni_list), yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig, use_container_width=True)
+        st.write(f"### 📋 상세 데이터 (기초지역별 최신 조사 기준)")
         st.dataframe(full_table_df[['기초지역', '후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
 elif mode == "대선 비교":
