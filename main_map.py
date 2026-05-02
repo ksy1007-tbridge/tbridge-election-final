@@ -5,7 +5,7 @@ import plotly.express as px
 import math
 from streamlit_gsheets import GSheetsConnection
 
-# 1. 페이지 설정 및 브랜딩 컬러
+# 1. 페이지 설정 및 브랜딩 컬러 고정
 st.set_page_config(page_title="T-Bridge Dashboard", page_icon="🌉", layout="wide")
 C_MINJU, C_GUKHIM, C_JINBO, C_GONGHWA, C_OTHER = "#004EA2", "#E61E2B", "#D6001C", "#002B5B", "#808080"
 B_INDIGO, S_FILL, S_LINE = "#1A237E", "#E3F2FD", "#1565C0"
@@ -23,8 +23,9 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 HEX_MAP = {'경기':(1,6),'강원':(2,6),'인천':(0,5),'서울':(1,5),'충북':(2,5),'대전':(1,4),'세종':(2,4),'경북':(3,4),'전북':(0,3),'충남':(1,3),'대구':(2,3),'울산':(3,3),'전남':(0,2),'광주':(1,2),'경남':(2,2),'부산':(3,2),'제주':(0,1)}
-NAME_MAP = {'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종','세종시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주','제주도':'제주'}
+NAME_MAP = {'서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천','광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'서울','세종시':'세종','경기도':'경기','강원도':'강원','강원특별자치도':'강원','충청북도':'충북','충청남도':'충남','전라북도':'전북','전북특별자치도':'전북','전라남도':'전남','경상북도':'경북','경상남도':'경남','제주특별자치도':'제주','제주도':'제주'}
 
+# 정당 우선순위 로직
 def get_party_pri(p):
     p = str(p)
     if '민주' in p: return 1
@@ -83,21 +84,16 @@ def load_data():
         df['기초지역'] = df['기초지역'].fillna('전체').astype(str).str.strip()
         df['지지율'] = pd.to_numeric(df['지지율'].astype(str).str.replace('%',''), errors='coerce').fillna(0)
         df['조사일자'] = pd.to_datetime(df['조사일자']).dt.date
-        
-        # d_avg: 날짜별 평균 데이터
         d_avg = df.groupby(['조사일자','지역','기초지역','후보','정당'], as_index=False)['지지율'].mean()
         
-        # [V13.5 핵심 해결책] 각 지역/기초지역별로 "가장 최신 날짜"의 데이터만 추출
-        # 단순히 후보별 마지막 기록을 찾는 것이 아니라, 해당 구역의 마지막 조사 시점을 기준으로 함
+        # 최신 날짜 기준 필터링 (고스트 데이터 방지)
         latest_dates = d_avg.groupby(['지역', '기초지역'])['조사일자'].max().reset_index()
         d_lat = pd.merge(d_avg, latest_dates, on=['지역', '기초지역', '조사일자'])
-        
         return d_avg, d_lat
     except: return None, None
 
 d_all, d_lat = load_data()
 
-# 4. 내비게이션 및 사이드바 설정
 if 'sel_reg' not in st.session_state: st.session_state.sel_reg = '서울'
 sel = st.session_state.sel_reg
 
@@ -121,13 +117,13 @@ st.divider()
 
 offset_map = {1: -0.3, 2: -0.15, 3: 0.0, 4: 0.15, 5: 0.3}
 
-# 5. 모드별 콘텐츠
+# --- 모드 1: 현행 판세 ---
 if mode == "현행 판세":
     d_prov = d_lat[d_lat['기초지역']=='전체']
     st.plotly_chart(draw_map(d_prov, f"전국 광역 지지율 현황 (선택: {sel})", highlight=sel), use_container_width=True)
     st.divider()
     
-    # 지지율 추세 그래프
+    # 지지율 추세
     reg_hist = d_all[(d_all['지역'] == sel) & (d_all['기초지역'] == '전체')].sort_values('조사일자')
     if not reg_hist.empty:
         st.write(f"### 📈 {sel} 지지율 추세")
@@ -135,62 +131,53 @@ if mode == "현행 판세":
                            color_discrete_map={c: get_cand_color(p) for c, p in zip(reg_hist['후보'], reg_hist['정당'])})
         st.plotly_chart(fig_line, use_container_width=True)
 
-    # 최신 지지율 현황 (Top 2 필터링)
+    # 현황 막대
     reg_lat = d_prov[d_prov['지역']==sel].copy()
     if not reg_lat.empty:
+        # [V13.6 핵심] 컬럼 할당을 정렬 호출 전 최상단으로 이동
         reg_lat = reg_lat[reg_lat['지지율'] > 0]
-        # 해당 지역의 상위 2인만 추출
-        graph_df = reg_lat.sort_values('지지율', ascending=False).head(2)
+        reg_lat['p_pri'] = reg_lat['정당'].apply(get_party_pri)
         
         st.write(f"### 📊 {sel} 최신 지지율 현황 (Top 2)")
+        graph_df = reg_lat.sort_values('지지율', ascending=False).head(2)
         fig_bar = go.Figure()
-        
-        for cand in reg_lat.sort_values('후보')['후보'].unique():
+        for cand in graph_df.sort_values('p_pri')['후보'].unique():
             df_c = graph_df[graph_df['후보'] == cand]
-            if df_c.empty: continue
-            
-            party = str(df_c['정당'].iloc[0])
-            pri = get_party_pri(party)
-            offset = offset_map.get(pri, 0.4)
-            
-            fig_bar.add_trace(go.Bar(
-                name=cand, x=df_c['기초지역'], y=df_c['지지율'],
-                text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"),
-                textposition='outside', marker_color=get_cand_color(party),
-                offset=offset, width=0.14
-            ))
+            party = str(df_c['정당'].iloc[0]); pri = get_party_pri(party)
+            fig_bar.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x:f"{x:.1f}%"), textposition='outside', marker_color=get_cand_color(party), offset=offset_map.get(pri, 0.4), width=0.14))
         fig_bar.update_layout(barmode='overlay', yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig_bar, use_container_width=True)
 
+        # 상세 데이터 표 (에러 발생 지점 수정 완료)
         st.write(f"### 📋 상세 데이터 (최신 조사일: {reg_lat['조사일자'].max()})")
         st.dataframe(reg_lat.sort_values('p_pri')[['후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
+# --- 모드 2: 시군구 판세 ---
 elif mode == "시군구 판세":
     st.plotly_chart(draw_map(None, f"🔍 {sel} 시군구 판세 상세 분석", mode="status", active=act_regs, highlight=sel), use_container_width=True)
     sub = d_lat[d_lat['지역']==sel].copy()
     if not sub.empty:
+        # [V13.6 핵심] 컬럼 할당을 필터링 직후로 이동
         sub = sub[sub['지지율'] > 0]
         sub['p_pri'] = sub['정당'].apply(get_party_pri)
         sub['m_key'] = sub['기초지역'].apply(lambda x: 0 if x == '전체' else 1)
         
         full_table_df = sub.sort_values(['m_key', '기초지역', 'p_pri'])
-        fig = go.Figure()
         muni_list = ['전체'] + sorted([m for m in sub['기초지역'].unique() if m != '전체'])
-        # 그래프는 여전히 상위 2인만 시각화
         graph_df = sub.sort_values(['기초지역', '지지율'], ascending=[True, False]).groupby('기초지역').head(2).reset_index(drop=True)
         
+        fig = go.Figure()
         for cand in full_table_df['후보'].unique():
             df_c = graph_df[graph_df['후보'] == cand]
             if df_c.empty: continue
-            party = str(df_c['정당'].iloc[0])
-            pri = get_party_pri(party)
-            offset = offset_map.get(pri, 0.4)
-            fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=get_cand_color(party), offset=offset, width=0.14))
+            party = str(df_c['정당'].iloc[0]); pri = get_party_pri(party)
+            fig.add_trace(go.Bar(name=cand, x=df_c['기초지역'], y=df_c['지지율'], text=df_c['지지율'].apply(lambda x: f"{x:.1f}%"), textposition='outside', marker_color=get_cand_color(party), offset=offset_map.get(pri, 0.4), width=0.14))
         fig.update_layout(barmode='overlay', xaxis=dict(categoryorder='array', categoryarray=muni_list), yaxis=dict(range=[0, 105]), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), plot_bgcolor='white', bargap=0.1)
         st.plotly_chart(fig, use_container_width=True)
         st.write(f"### 📋 상세 데이터 (기초지역별 최신 조사 기준)")
         st.dataframe(full_table_df[['기초지역', '후보', '정당', '지지율']], hide_index=True, use_container_width=True)
 
+# --- 모드 3: 대선 비교 ---
 elif mode == "대선 비교":
     p_list = [['서울특별시','이재명','더불어민주당',47.13],['서울특별시','김문수','국민의힘',41.55],['인천광역시','이재명','더불어민주당',51.67],['인천광역시','김문수','국민의힘',38.44],['경기도','이재명','더불어민주당',52.20],['경기도','김문수','국민의힘',37.95],['강원특별자치도','이재명','더불어민주당',43.95],['강원특별자치도','김문수','국민의힘',47.30],['대전광역시','이재명','더불어민주당',48.50],['대전광역시','김문수','국민의힘',40.58],['세종특별자치시','이재명','더불어민주당',55.62],['세종특별자치시','김문수','국민의힘',33.21],['충청북도','이재명','더불어민주당',47.47],['충청북도','김문수','국민의힘',43.22],['충청남도','이재명','더불어민주당',47.68],['충청남도','김문수','국민의힘',43.26],['광주광역시','이재명','더불어민주당',84.77],['광주광역시','김문수','국민의힘',8.02],['전북특별자치도','이재명','더불어민주당',82.65],['전북특별자치도','김문수','국민의힘',10.90],['전라남도','이재명','더불어민주당',85.87],['전라남도','김문수','국민의힘',8.54],['대구광역시','이재명','더불어민주당',23.22],['대구광역시','김문수','국민의힘',67.62],['경상북도','이재명','더불어민주당',25.52],['경상북도','김문수','국민의힘',66.87],['부산광역시','이재명','더불어민주당',40.14],['부산광역시','김문수','국민의힘',51.39],['울산광역시','이재명','더불어민주당',42.54],['울산광역시','김문수','국민의힘',47.57],['경상남도','이재명','더불어민주당',39.40],['경상남도','김문수','국민의힘',51.99],['제주특별자치도','이재명','더불어민주당',54.76],['제주특별자치도','김문수','국민의힘',34.78]]
     d_25 = pd.DataFrame(p_list, columns=['지역','후보','정당','지지율'])
